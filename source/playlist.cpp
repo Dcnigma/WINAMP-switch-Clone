@@ -112,7 +112,7 @@ void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font)
         // --- Track title ---
         char line[256];
         if (md && (md->artist[0] || md->title[0]))
-            snprintf(line, sizeof(line), "%d. %.20s - %.20s", idx + 1, md->artist, md->title);
+            snprintf(line, sizeof(line), "%d. %.20s - %.40s", idx + 1, md->artist, md->title);
         else
         {
             const char* name = strrchr(trackPath, '/');

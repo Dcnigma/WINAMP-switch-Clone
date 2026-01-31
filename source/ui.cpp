@@ -11,6 +11,76 @@
 #define FB_W 1920
 #define FB_H 1080
 
+static int  scrollOffset = 0;
+static int  scrollTimer  = 0;
+static int  scrollPause  = 0;
+static bool scrollForward = true;
+static char lastSongText[256] = {0};
+
+static void getScrollingText(const char* fullText, char* out, size_t outSize)
+{
+    const int visibleChars   = 37;
+    const int scrollSpeed    = 8;    // lower = faster
+    const int pauseDuration  = 60;   // frames to pause at ends (~1 sec at 60fps)
+
+    int len = strlen(fullText);
+
+    // --- Reset scroll if song changed ---
+    if (strcmp(fullText, lastSongText) != 0)
+    {
+        strncpy(lastSongText, fullText, sizeof(lastSongText)-1);
+        scrollOffset  = 0;
+        scrollTimer   = 0;
+        scrollPause   = pauseDuration; // pause before first movement
+        scrollForward = true;
+    }
+
+    // If text fits, no scrolling needed
+    if (len <= visibleChars)
+    {
+        snprintf(out, outSize, "%-*s", visibleChars, fullText); // pad to fill area
+        return;
+    }
+
+    // Handle pause at edges
+    if (scrollPause > 0)
+    {
+        scrollPause--;
+    }
+    else
+    {
+        scrollTimer++;
+        if (scrollTimer >= scrollSpeed)
+        {
+            scrollTimer = 0;
+
+            if (scrollForward)
+                scrollOffset++;
+            else
+                scrollOffset--;
+
+            // Hit right end
+            if (scrollOffset >= len - visibleChars)
+            {
+                scrollOffset = len - visibleChars;
+                scrollForward = false;
+                scrollPause = pauseDuration;
+            }
+            // Hit left end
+            else if (scrollOffset <= 0)
+            {
+                scrollOffset = 0;
+                scrollForward = true;
+                scrollPause = pauseDuration;
+            }
+        }
+    }
+
+    // Copy visible window
+    snprintf(out, outSize, "%.*s", visibleChars, fullText + scrollOffset);
+}
+
+
 // --- Draw filled rectangle with alpha ---
 void drawRect(SDL_Renderer* renderer, SDL_Rect r, Uint8 rC, Uint8 gC, Uint8 bC, Uint8 aC)
 {
@@ -213,21 +283,23 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawRect(renderer, ListOptions, 150,150,0,150);
     drawRect(renderer, Duration, 150,150,0,150);
     drawRect(renderer, TotPylDurat, 255,0,0,150);
-    // --- Vertical text with green color ---
+
+
     SDL_Color green = {0, 255, 0, 255};
 
-//    drawVerticalText(renderer, font, songText, songInfo, green);
-      drawVerticalText(renderer, font, songText, songInfo, green,
-                   16,      // small horizontal padding
-                   10,      // small top padding
-                   ALIGN_TOP);
+    char scrollingSong[64];
+    getScrollingText(songText, scrollingSong, sizeof(scrollingSong));
+
+    drawVerticalText(renderer, font, scrollingSong, songInfo, green,
+                     16,
+                     10,
+                     ALIGN_TOP);
 
 
-
-    drawVerticalText(renderer, fontBig, liveTime, playtimeInfo, green,
-                     85,      // horizontal push
-                     0,
-                     ALIGN_CENTER);
+     drawVerticalText(renderer, fontBig, liveTime, playtimeInfo, green,
+                      85,      // horizontal push
+                      0,
+                      ALIGN_CENTER);
 
      int playing = playerGetCurrentTrackIndex();
      if (playing >= 0)
