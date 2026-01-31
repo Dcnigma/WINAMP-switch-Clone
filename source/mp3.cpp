@@ -42,9 +42,17 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
 
     unsigned char header[10];
     if (fread(header, 1, 10, f) != 10) { fclose(f); return; }
+
+    // Not an ID3v2 tag → nothing to read
     if (memcmp(header, "ID3", 3) != 0) { fclose(f); return; }
 
-    while (true)
+    //  Get total tag size (syncsafe int)
+    unsigned int tagSize = syncsafeToInt(&header[6]);
+
+    // Tag size does NOT include header, so add 10
+    long tagEnd = 10 + tagSize;
+
+    while (ftell(f) < tagEnd)
     {
         char frameId[5] = {0};
         unsigned char sizeBytes[4];
@@ -53,12 +61,16 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
         if (frameId[0] == 0) break;
 
         if (fread(sizeBytes, 1, 4, f) != 4) break;
+
+        // skip flags
         fseek(f, 2, SEEK_CUR);
 
         unsigned int frameSize =
             (header[3] == 4)
             ? syncsafeToInt(sizeBytes)
             : (sizeBytes[0]<<24)|(sizeBytes[1]<<16)|(sizeBytes[2]<<8)|(sizeBytes[3]);
+
+        if (frameSize == 0) break;
 
         if (strcmp(frameId,"TIT2")==0)
             readTextFrame(f, frameSize, entry.title, sizeof(entry.title));
@@ -70,6 +82,7 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
 
     fclose(f);
 }
+
 
 // --- Read bitrate & sample rate from first MPEG frame ---
 static void readMp3BitrateAndRate(const char* path, int& outBitrateKbps, int& outSampleRateKHz)
@@ -197,13 +210,13 @@ bool mp3Load(const char* path)
 {
     if (!path) return false;
 
-    playlistAdd(path);
-
     Mp3MetadataEntry entry;
     readMp3Metadata(path, entry);
     readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz);
     entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
 
+    playlistAdd(path);
     playlistMetadata.push_back(entry);
+
     return true;
 }

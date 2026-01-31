@@ -158,11 +158,6 @@ void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font)
             snprintf(live, sizeof(live), "%02d:%02d",
                      elapsed/60, elapsed%60);
 
-
-//            snprintf(live, sizeof(live), "%02d:%02d / %02d:%02d",
-//                     elapsed / 60, elapsed % 60,
-//                     total / 60, total % 60);
-
             drawVerticalText(renderer, font, live, timeRect, timeColor);
         }
         else

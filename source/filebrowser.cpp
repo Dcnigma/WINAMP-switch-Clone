@@ -98,17 +98,22 @@ static void importFolder(const char* path)
 
     std::sort(mp3Files.begin(), mp3Files.end());
 
+    // 🔥 ensure clean state before bulk add
+    playlistClear();
+    mp3ClearMetadata();
+
     playlistScroll = 0;
+
     for (auto& f : mp3Files)
     {
-        // Build full path safely
         std::string fullPath = std::string(path) + "/" + f;
         if (fullPath.length() >= FB_PATH_LEN)
             fullPath.resize(FB_PATH_LEN - 1);
 
-        mp3Load(fullPath.c_str()); // add metadata to playlist
+        mp3Load(fullPath.c_str()); // adds BOTH path and metadata
     }
 }
+
 
 
 static void importFile(const char* path)
