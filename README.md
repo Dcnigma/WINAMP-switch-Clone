@@ -9,6 +9,7 @@ todo:
 
 - Proper UTF-16 decoding (for non-ASCII tags)
 
+- Touchscreen controls
 
 🎚 Seek bar
 
