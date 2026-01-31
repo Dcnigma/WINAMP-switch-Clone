@@ -6,6 +6,11 @@ void playerStop();
 void playerNext();
 void playerPrev();
 bool playerIsPlaying();
-int  playerGetCurrentIndex();
 void playerUpdate();
+
+
+int playerGetCurrentIndex();
+int playerGetCurrentTrackIndex();
+int playerGetElapsedSeconds();
+int playerGetTrackLength();
 int playlistGetCurrentIndex();

@@ -3,22 +3,25 @@
 #include <vector>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static std::vector<Mp3MetadataEntry> playlistMetadata;
 
 /* ---------- Helpers ---------- */
 
+// Convert ID3v2 syncsafe integer to int
 static unsigned int syncsafeToInt(unsigned char* b)
 {
     return (b[0] << 21) | (b[1] << 14) | (b[2] << 7) | b[3];
 }
 
+// Read a text frame from ID3v2
 static void readTextFrame(FILE* f, unsigned int size, char* out, size_t outSize)
 {
     if (size < 1) return;
 
     unsigned char encoding;
-    fread(&encoding, 1, 1, f);
+    fread(&encoding, 1, 1, f); // encoding byte
     size--;
 
     size_t toRead = (size < outSize - 1) ? size : outSize - 1;
@@ -29,6 +32,7 @@ static void readTextFrame(FILE* f, unsigned int size, char* out, size_t outSize)
         fseek(f, size - toRead, SEEK_CUR);
 }
 
+// Read ID3v2 metadata from MP3
 static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
 {
     memset(&entry, 0, sizeof(entry));
@@ -67,6 +71,39 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
     fclose(f);
 }
 
+// Estimate MP3 duration from file size & bitrate
+static int getMp3DurationSeconds(const char* path)
+{
+    FILE* f = fopen(path, "rb");
+    if (!f) return 0;
+
+    unsigned char buf[10];
+    if (fread(buf, 1, 10, f) != 10) { fclose(f); return 0; }
+
+    // skip ID3 tag if present
+    if (buf[0]=='I' && buf[1]=='D' && buf[2]=='3') {
+        int tagSize = (buf[6]<<21)|(buf[7]<<14)|(buf[8]<<7)|buf[9];
+        fseek(f, tagSize, SEEK_CUR);
+        fread(buf, 1, 4, f); // first frame header
+    }
+
+    unsigned int bitrate = 128000; // default 128 kbps
+    if ((buf[0]==0xFF) && ((buf[1]&0xE0)==0xE0))
+    {
+        int brIndex = (buf[2]>>4) & 0x0F;
+        int bitrates[] = {0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0};
+        bitrate = bitrates[brIndex]*1000;
+    }
+
+    fclose(f);
+
+    struct stat st;
+    if (stat(path, &st) != 0) return 0;
+
+    double seconds = (double)st.st_size * 8 / bitrate;
+    return (int)seconds;
+}
+
 /* ---------- Public API ---------- */
 
 void mp3ClearMetadata()
@@ -82,11 +119,13 @@ bool mp3AddToPlaylist(const char* path)
 
     Mp3MetadataEntry entry;
     readMp3Metadata(path, entry);
-    playlistMetadata.push_back(entry);
 
+    // Estimate duration
+    entry.durationSeconds = getMp3DurationSeconds(path);
+
+    playlistMetadata.push_back(entry);
     return true;
 }
-
 
 void mp3ReloadAllMetadata()
 {
@@ -100,6 +139,7 @@ void mp3ReloadAllMetadata()
 
         Mp3MetadataEntry entry;
         readMp3Metadata(path, entry);
+        entry.durationSeconds = getMp3DurationSeconds(path);
         playlistMetadata.push_back(entry);
     }
 }
@@ -113,8 +153,8 @@ const Mp3MetadataEntry* mp3GetTrackMetadata(int index)
 int mp3GetPlaylistCount()
 {
     return playlistMetadata.size();
-    playlistScroll = 0;
 }
+
 bool mp3Load(const char* path)
 {
     if (!path) return false;
@@ -123,7 +163,8 @@ bool mp3Load(const char* path)
 
     Mp3MetadataEntry entry;
     readMp3Metadata(path, entry);
-    playlistMetadata.push_back(entry);
+    entry.durationSeconds = getMp3DurationSeconds(path);
 
+    playlistMetadata.push_back(entry);
     return true;
 }

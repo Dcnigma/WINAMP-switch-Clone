@@ -11,6 +11,13 @@ static std::vector<std::string> playlist;
 int playlistScroll = 0;            // top visible item
 static int currentIndex = 0;       // selected track (for playback highlight)
 
+static void formatTime(int seconds, char* out, size_t outSize)
+{
+    int m = seconds / 60;
+    int s = seconds % 60;
+    snprintf(out, outSize, "%02d:%02d", m, s);
+}
+
 /* ---------- Selection control (independent from scroll) ---------- */
 void playlistSetCurrentIndex(int index)
 {
@@ -83,29 +90,33 @@ void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font)
     int count = playlistGetCount();
     int maxVisible = 4;
 
+    // Clamp scroll
     if (playlistScroll > count - maxVisible)
         playlistScroll = (count - maxVisible > 0) ? count - maxVisible : 0;
-    if (playlistScroll < 0)
-        playlistScroll = 0;
+    if (playlistScroll < 0) playlistScroll = 0;
 
     int visible = (count < maxVisible) ? count : maxVisible;
+
+    int playingIndex = playerGetCurrentTrackIndex();
+    int elapsed = playerGetElapsedSeconds();
+    int total = playerGetTrackLength();
 
     for (int i = 0; i < visible; i++)
     {
         int idx = playlistScroll + i;
+        const char* trackPath = playlistGetTrack(idx);
+        if (!trackPath) continue;
 
-        char line[256];
         const Mp3MetadataEntry* md = mp3GetTrackMetadata(idx);
 
+        // --- Track title ---
+        char line[256];
         if (md && (md->artist[0] || md->title[0]))
             snprintf(line, sizeof(line), "%d. %.20s - %.20s", idx + 1, md->artist, md->title);
         else
         {
-            const char* full = playlistGetTrack(idx);
-            if (!full) continue;
-
-            const char* name = strrchr(full, '/');
-            name = name ? name + 1 : full;
+            const char* name = strrchr(trackPath, '/');
+            name = name ? name + 1 : trackPath;
             snprintf(line, sizeof(line), "%d. %s", idx + 1, name);
         }
 
@@ -115,9 +126,8 @@ void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font)
         titleRect.x += (maxVisible - 1 - i) * 75;
         timeRect.x  += (maxVisible - 1 - i) * 75;
 
-        // --- Selection highlight (blue) ---
-        bool selectedItem = (idx == currentIndex);
-        if (selectedItem)
+        // --- Selection highlight ---
+        if (idx == playlistGetCurrentIndex())
         {
             SDL_SetRenderDrawColor(renderer, 0, 128, 255, 60); // blue selection
             SDL_Rect highlight = titleRect;
@@ -126,17 +136,38 @@ void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font)
             SDL_RenderFillRect(renderer, &highlight);
         }
 
-        // --- Text color ---
-        SDL_Color titleColor  = (idx == playerGetCurrentIndex()) ? SDL_Color{255,255,255,255} : SDL_Color{0,255,0,255};
-        SDL_Color timeColor   = (idx == playerGetCurrentIndex()) ? SDL_Color{255,255,255,255} : SDL_Color{0,255,0,255};
+        // --- Text colors ---
+        SDL_Color titleColor = (idx == playingIndex) ? SDL_Color{255,255,255,255} : SDL_Color{0,255,0,255};
+        SDL_Color timeColor  = titleColor;
 
-        // --- Left-aligned text ---
+        // --- Draw track title ---
         SDL_Rect leftAlignedRect = titleRect;
         leftAlignedRect.x += 2; // small padding
         drawVerticalText(renderer, font, line, leftAlignedRect, titleColor);
 
-        leftAlignedRect = timeRect;
-        leftAlignedRect.x += 2;
-        drawVerticalText(renderer, font, "--:--", leftAlignedRect, timeColor);
+        // --- Draw track time ---
+        char timeText[16] = "--:--";
+
+        if (md && md->durationSeconds > 0)
+            formatTime(md->durationSeconds, timeText, sizeof(timeText));
+
+        // If currently playing, overwrite with live elapsed / total
+        if (idx == playingIndex)
+        {
+            char live[32];
+            snprintf(live, sizeof(live), "%02d:%02d",
+                     elapsed/60, elapsed%60);
+
+
+//            snprintf(live, sizeof(live), "%02d:%02d / %02d:%02d",
+//                     elapsed / 60, elapsed % 60,
+//                     total / 60, total % 60);
+
+            drawVerticalText(renderer, font, live, timeRect, timeColor);
+        }
+        else
+        {
+            drawVerticalText(renderer, font, timeText, timeRect, timeColor);
+        }
     }
 }

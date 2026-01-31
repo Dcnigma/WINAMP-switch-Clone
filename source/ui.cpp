@@ -1,4 +1,6 @@
 #include "ui.h"
+#include "mp3.h"
+#include "player.h"
 #include "playlist.h"
 #include <SDL.h>
 #include <SDL_ttf.h>
@@ -76,10 +78,23 @@ void drawVerticalText(SDL_Renderer* renderer,
                      ALIGN_TOP);  // default alignment
 }
 
+void formatTime(int seconds, char* out, size_t size)
+{
+    int m = seconds / 60;
+    int s = seconds % 60;
+    snprintf(out, size, "%02d:%02d", m, s);
+}
+
 
 // --- Render full UI ---
 void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, const char* songText)
 {
+
+    // --- Live playtime string ---
+    char liveTime[16];
+    int elapsed = playerGetElapsedSeconds();
+    snprintf(liveTime, sizeof(liveTime), "%02d:%02d", elapsed / 60, elapsed % 60);
+
     // Clear screen
     SDL_RenderClear(renderer);
 
@@ -135,6 +150,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     SDL_Rect selPlaylist   = {70, 270,100,100};
     SDL_Rect miscPlaylist  = {70, 383,100,100};
     SDL_Rect ListOptions   = {70, 893,100,100};
+    SDL_Rect Duration      = {45, 765,50,100};
 
     // --- Draw rectangles with transparency ---
     drawRect(renderer, topBar, 200,0,0,150);
@@ -181,6 +197,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawRect(renderer, selPlaylist, 150,150,0,150);
     drawRect(renderer, miscPlaylist, 0,150,150,150);
     drawRect(renderer, ListOptions, 150,150,0,150);
+    drawRect(renderer, Duration, 150,150,0,150);
 
     // --- Vertical text with green color ---
     SDL_Color green = {0, 255, 0, 255};
@@ -191,9 +208,10 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
                    10,      // small top padding
                    ALIGN_TOP);
 
-//    drawVerticalText(renderer, fontBig, "03:42", playtimeInfo, green); // BIG size
-    drawVerticalText(renderer, fontBig, "03:42", playtimeInfo, green,
-                     85,      // 👈 BIG horizontal push
+
+
+    drawVerticalText(renderer, fontBig, liveTime, playtimeInfo, green,
+                     85,      // horizontal push
                      0,
                      ALIGN_CENTER);
 
@@ -207,6 +225,11 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
                  10,      // small top padding
                  ALIGN_TOP);
 
+
+     drawVerticalText(renderer, font, liveTime, Duration, green,
+                 25,      // small horizontal padding
+                 10,      // small top padding
+                 ALIGN_TOP);
 
     // --- Playlist ---
     renderPlaylist(renderer, font);
