@@ -18,6 +18,19 @@ void drawRect(SDL_Renderer* renderer, SDL_Rect r, Uint8 rC, Uint8 gC, Uint8 bC, 
     SDL_RenderFillRect(renderer, &r);
 }
 
+void formatTimeLong(int seconds, char* out, size_t outSize)
+{
+    int h = seconds / 3600;
+    int m = (seconds % 3600) / 60;
+    int s = seconds % 60;
+
+    if (h > 0)
+        snprintf(out, outSize, "%02d:%02d:%02d", h, m, s);
+    else
+        snprintf(out, outSize, "%02d:%02d", m, s);
+}
+
+
 void drawVerticalText(SDL_Renderer* renderer,
                       TTF_Font* font,
                       const char* text,
@@ -151,6 +164,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     SDL_Rect miscPlaylist  = {70, 383,100,100};
     SDL_Rect ListOptions   = {70, 893,100,100};
     SDL_Rect Duration      = {45, 765,50,100};
+    SDL_Rect TotPylDurat   = {109, 512,63, 358};
 
     // --- Draw rectangles with transparency ---
     drawRect(renderer, topBar, 200,0,0,150);
@@ -198,7 +212,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawRect(renderer, miscPlaylist, 0,150,150,150);
     drawRect(renderer, ListOptions, 150,150,0,150);
     drawRect(renderer, Duration, 150,150,0,150);
-
+    drawRect(renderer, TotPylDurat, 255,0,0,150);
     // --- Vertical text with green color ---
     SDL_Color green = {0, 255, 0, 255};
 
@@ -230,6 +244,44 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
                  25,      // small horizontal padding
                  10,      // small top padding
                  ALIGN_TOP);
+
+     // --- Compute elapsed seconds so far in playlist ---
+     int playlistElapsed = 0;
+     int currentTrack = playerGetCurrentIndex();
+     for (int i = 0; i < currentTrack; i++)
+     {
+         const Mp3MetadataEntry* md = mp3GetTrackMetadata(i);
+         if (md) playlistElapsed += md->durationSeconds;
+     }
+
+     // Add current track elapsed
+     playlistElapsed += playerGetElapsedSeconds();
+
+     // --- Compute total playlist duration ---
+     int playlistTotal = 0;
+     int trackCount = mp3GetPlaylistCount();
+     for (int i = 0; i < trackCount; i++)
+     {
+         const Mp3MetadataEntry* md = mp3GetTrackMetadata(i);
+         if (md) playlistTotal += md->durationSeconds;
+     }
+
+     // --- Format strings ---
+     char elapsedStr[32];
+     char totalStr[32];
+     char playlistTime[64];
+
+     formatTimeLong(playlistElapsed, elapsedStr, sizeof(elapsedStr));
+     formatTimeLong(playlistTotal, totalStr, sizeof(totalStr));
+     snprintf(playlistTime, sizeof(playlistTime), "%s / %s", elapsedStr, totalStr);
+
+     // --- Draw in UI ---
+
+     drawVerticalText(renderer, font, playlistTime, TotPylDurat, green,
+                      25,      // horizontal padding
+                      10,      // top padding
+                      ALIGN_TOP);
+
 
     // --- Playlist ---
     renderPlaylist(renderer, font);
