@@ -229,15 +229,25 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
                      0,
                      ALIGN_CENTER);
 
-    drawVerticalText(renderer, font, "192", kbpsInfo, green,
-                 20,      // small horizontal padding
-                 10,      // small top padding
-                 ALIGN_TOP);
+     int playing = playerGetCurrentTrackIndex();
+     if (playing >= 0)
+     {
+         const Mp3MetadataEntry* md = mp3GetTrackMetadata(playing);
+         if (md)
+         {
+             char kbpsText[8];
+             char kHzText[8];
 
-    drawVerticalText(renderer, font, "44", kHzInfo, green,
-                 20,      // small horizontal padding
-                 10,      // small top padding
-                 ALIGN_TOP);
+             snprintf(kbpsText, sizeof(kbpsText), "%d", md->bitrateKbps);
+             snprintf(kHzText, sizeof(kHzText), "%d", md->sampleRateKHz);
+
+             drawVerticalText(renderer, font, kbpsText, kbpsInfo, green,
+                              20, 10, ALIGN_TOP);
+
+             drawVerticalText(renderer, font, kHzText, kHzInfo, green,
+                              20, 10, ALIGN_TOP);
+         }
+     }
 
 
      drawVerticalText(renderer, font, liveTime, Duration, green,

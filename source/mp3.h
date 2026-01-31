@@ -5,14 +5,15 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define MP3_TITLE_LEN 128
-#define MP3_ARTIST_LEN 128
+struct Mp3MetadataEntry
+{
+    char title[128];
+    char artist[128];
+    int durationSeconds;
 
-typedef struct {
-    char title[MP3_TITLE_LEN];
-    char artist[MP3_ARTIST_LEN];
-    int durationSeconds; // optional, calculate later if needed
-} Mp3MetadataEntry;
+    int bitrateKbps;    // NEW: bitrate in kbps
+    int sampleRateKHz;  // NEW: sample rate in kHz
+};
 
 // --- Playlist metadata management ---
 void mp3LoadPlaylist();                        // build metadata for all files in playlist
