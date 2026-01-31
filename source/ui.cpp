@@ -16,32 +16,9 @@ void drawRect(SDL_Renderer* renderer, SDL_Rect r, Uint8 rC, Uint8 gC, Uint8 bC, 
     SDL_RenderFillRect(renderer, &r);
 }
 
-// --- Draw vertical text ---
-// void drawVerticalText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Rect rect)
-// {
-//     if (!font || !text) return;
-//
-//     SDL_Color white = {255,255,255,255};
-//     SDL_Surface* s = TTF_RenderText_Solid(font, text, white);
-//     if (!s) return;
-//
-//     SDL_Texture* t = SDL_CreateTextureFromSurface(renderer, s);
-//     if (t)
-//     {
-//         SDL_Rect dst;
-//         dst.w = s->w;
-//         dst.h = s->h;
-//         dst.x = rect.x + (rect.w - dst.w) / 2;
-//         dst.y = rect.y + (rect.h - dst.h) / 2;
-//
-//         SDL_Point center = { dst.w / 2, dst.h / 2 };
-//         SDL_RenderCopyEx(renderer, t, NULL, &dst, 90.0, &center, SDL_FLIP_NONE);
-//         SDL_DestroyTexture(t);
-//     }
-//     SDL_FreeSurface(s);
-// }
 
-// --- Draw vertical text (rotated 90°) ---
+
+// --- Draw vertical text (rotated 90°), left-aligned inside rectangle ---
 void drawVerticalText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Rect rect, SDL_Color color)
 {
     if (!font || !text) return;
@@ -55,15 +32,19 @@ void drawVerticalText(SDL_Renderer* renderer, TTF_Font* font, const char* text, 
     SDL_Rect dst;
     dst.w = s->w;
     dst.h = s->h;
-    dst.x = rect.x + (rect.w - dst.w) / 2;
-    dst.y = rect.y + (rect.h - dst.h) / 2;
 
-    SDL_Point center = { dst.w / 2, dst.h / 2 };
+    // Offset x so rotated text fits inside the rectangle
+    dst.x = rect.x + rect.w - dst.h; // <-- use text height because rotation swaps width/height
+    dst.y = rect.y;
+
+    // Rotate around top-left of unrotated text
+    SDL_Point center = {0, 0};
     SDL_RenderCopyEx(renderer, t, NULL, &dst, 90.0, &center, SDL_FLIP_NONE);
 
     SDL_DestroyTexture(t);
     SDL_FreeSurface(s);
 }
+
 
 
 
@@ -90,7 +71,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, SDL_Texture* skin, const c
     SDL_Rect playtimeInfo  = {1694, 178,100,221};
     SDL_Rect kbpsInfo      = {1639, 426, 57, 74};
     SDL_Rect kHzInfo       = {1639, 600, 57, 55};
-    SDL_Rect playlistFiles = {215,   40,319,968};
+    SDL_Rect playlistFiles = {215,   50,310,950};
 
     SDL_Rect prevButton    = {1340,  60,100, 90};
     SDL_Rect playButton    = {1340, 151,100, 90};

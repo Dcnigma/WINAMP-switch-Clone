@@ -41,7 +41,7 @@ int main()
     playlistClear();
     mp3ClearMetadata();
 
-    mp3AddToPlaylist("romfs:/song.mp3");   // ✅ Demo song in playlist + metadata
+    mp3AddToPlaylist("romfs:/song.mp3");
     playlistScroll = 0;
 
 
@@ -93,8 +93,6 @@ int main()
             playerStop();
         }
         // Scroll playlist
-//        if (down & HidNpadButton_Up)   playlistScroll--;
-//        if (down & HidNpadButton_Down) playlistScroll++;
         if (down & HidNpadButton_Up)   playlistScrollUp();
         if (down & HidNpadButton_Down) playlistScrollDown();
 
@@ -104,7 +102,7 @@ int main()
         SDL_SetRenderDrawColor(renderer, 0,0,0,255);
         SDL_RenderClear(renderer);
 
-        // Display first song metadata
+
         // --- Display currently playing song metadata ---
         char songText[256] = "Stopped";
 
@@ -115,7 +113,10 @@ int main()
             const Mp3MetadataEntry* md = mp3GetTrackMetadata(playingIndex);
             if (md)
             {
-                snprintf(songText, sizeof(songText), "%.120s - %.120s",
+                // Include playlist index like OG Winamp
+                snprintf(songText, sizeof(songText),
+                         "%d. %.120s - %.120s",
+                         playingIndex + 1,                  // playlist number
                          md->artist[0] ? md->artist : "Unknown",
                          md->title[0]  ? md->title  : "Unknown");
             }

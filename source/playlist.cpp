@@ -150,7 +150,7 @@ void playlistClear()
 
 void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font)
 {
-    SDL_Rect trackTitleArea = {230, 33, 72, 870};
+    SDL_Rect trackTitleArea = {230, 55, 72, 870};
     SDL_Rect trackTimeArea  = {230, 908, 65, 91};
 
     int count = playlistGetCount();
@@ -194,8 +194,8 @@ void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font)
         {
             SDL_SetRenderDrawColor(renderer, 0, 128, 255, 60); // blue selection
             SDL_Rect highlight = titleRect;
-            highlight.w = 72;
-            highlight.h = 870;
+            highlight.w = 70;
+            highlight.h = 945;
             SDL_RenderFillRect(renderer, &highlight);
         }
 
