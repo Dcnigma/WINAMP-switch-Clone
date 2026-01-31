@@ -35,13 +35,13 @@ static bool isMp3(const char* name)
     const char* ext = strrchr(name, '.');
     return ext && strcasecmp(ext, ".mp3") == 0;
 }
-
 static void scanDirectory(const char* path)
 {
     itemCount = 0;
     selected  = 0;
 
-    snprintf(currentPath, sizeof(currentPath), "%s", path);
+    // Copy current path safely
+    strlcpy(currentPath, path, sizeof(currentPath));
 
     DIR* dir = opendir(path);
     if (!dir) return;
@@ -49,8 +49,8 @@ static void scanDirectory(const char* path)
     // Add ".." unless at root
     if (strcmp(path, "sdmc:/") != 0 && itemCount < FB_MAX_ITEMS)
     {
-        strcpy(items[itemCount].name, "..");
-        strcpy(items[itemCount].fullpath, path);
+        strlcpy(items[itemCount].name, "..", sizeof(items[itemCount].name));
+        strlcpy(items[itemCount].fullpath, path, sizeof(items[itemCount].fullpath));
         items[itemCount].isDir = true;
         itemCount++;
     }
@@ -60,11 +60,12 @@ static void scanDirectory(const char* path)
     {
         if (ent->d_name[0] == '.') continue;
 
+        // Build full path safely
         snprintf(items[itemCount].fullpath, sizeof(items[itemCount].fullpath),
                  "%s/%s", path, ent->d_name);
 
-        strncpy(items[itemCount].name, ent->d_name, sizeof(items[itemCount].name) - 1);
-        items[itemCount].name[sizeof(items[itemCount].name) - 1] = '\0';
+        // Copy name safely
+        strlcpy(items[itemCount].name, ent->d_name, sizeof(items[itemCount].name));
 
         struct stat st;
         if (stat(items[itemCount].fullpath, &st) == 0)
@@ -78,8 +79,8 @@ static void scanDirectory(const char* path)
     closedir(dir);
 }
 
-/* ---------- Import ---------- */
 
+/* ---------- Import ---------- */
 static void importFolder(const char* path)
 {
     DIR* dir = opendir(path);
@@ -91,21 +92,24 @@ static void importFolder(const char* path)
     while ((ent = readdir(dir)))
     {
         if (isMp3(ent->d_name))
-        {
-            mp3Files.push_back(std::string(ent->d_name));
-        }
+            mp3Files.emplace_back(ent->d_name);
     }
     closedir(dir);
 
     std::sort(mp3Files.begin(), mp3Files.end());
+
     playlistScroll = 0;
     for (auto& f : mp3Files)
     {
-        char full[FB_PATH_LEN];
-        snprintf(full, sizeof(full), "%s/%s", path, f.c_str());
-        mp3Load(full); // add metadata to playlist
+        // Build full path safely
+        std::string fullPath = std::string(path) + "/" + f;
+        if (fullPath.length() >= FB_PATH_LEN)
+            fullPath.resize(FB_PATH_LEN - 1);
+
+        mp3Load(fullPath.c_str()); // add metadata to playlist
     }
 }
+
 
 static void importFile(const char* path)
 {
@@ -116,8 +120,8 @@ static void importFile(const char* path)
 
 void fileBrowserOpen()
 {
-    playlistClear();        // 🔥 remove demo track
-    mp3ClearMetadata();     // 🔥 remove its metadata too
+    playlistClear();
+    mp3ClearMetadata();
     scanDirectory("sdmc:/");
     playlistScroll = 0;
     active = true;
@@ -134,21 +138,24 @@ void fileBrowserUpdate(PadState* pad)
 {
     if (openCooldown > 0) { openCooldown--; return; }
     if (!active) return;
-    playlistScroll = 0;
+
     u64 down = padGetButtonsDown(pad);
 
+    // --- Navigation ---
     if (down & HidNpadButton_Up)
         selected = (selected > 0) ? selected - 1 : selected;
 
     if (down & HidNpadButton_Down)
         selected = (selected < itemCount - 1) ? selected + 1 : selected;
 
-    if (down & HidNpadButton_B)
+    // --- Close file browser ---
+    if (down & HidNpadButton_X)
     {
         active = false;
         return;
     }
 
+    // --- Navigate into folders / go up ---
     if (down & HidNpadButton_A)
     {
         BrowserItem* it = &items[selected];
@@ -168,19 +175,36 @@ void fileBrowserUpdate(PadState* pad)
             return;
         }
 
-        // Folder = import MP3s + enter folder
+        // Enter folder
         if (it->isDir)
         {
-            importFolder(it->fullpath);
             scanDirectory(it->fullpath);
         }
-        // File = import single MP3
-        else if (isMp3(it->name))
+
+        // Single MP3 file = do nothing (just select it)
+    }
+
+    // --- Add to playlist ---
+    if (down & HidNpadButton_B)
+    {
+        BrowserItem* it = &items[selected];
+
+        // ".." = import entire current folder
+        if (strcmp(it->name, "..") == 0)
+        {
+            importFolder(currentPath);
+            active = false; // close browser after importing folder
+        }
+        // MP3 file = import just this file
+        else if (!it->isDir && isMp3(it->name))
         {
             importFile(it->fullpath);
         }
+
+        return;
     }
 }
+
 
 /* ---------- Render ---------- */
 

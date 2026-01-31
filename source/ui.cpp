@@ -17,29 +17,55 @@ void drawRect(SDL_Renderer* renderer, SDL_Rect r, Uint8 rC, Uint8 gC, Uint8 bC, 
 }
 
 // --- Draw vertical text ---
-void drawVerticalText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Rect rect)
+// void drawVerticalText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Rect rect)
+// {
+//     if (!font || !text) return;
+//
+//     SDL_Color white = {255,255,255,255};
+//     SDL_Surface* s = TTF_RenderText_Solid(font, text, white);
+//     if (!s) return;
+//
+//     SDL_Texture* t = SDL_CreateTextureFromSurface(renderer, s);
+//     if (t)
+//     {
+//         SDL_Rect dst;
+//         dst.w = s->w;
+//         dst.h = s->h;
+//         dst.x = rect.x + (rect.w - dst.w) / 2;
+//         dst.y = rect.y + (rect.h - dst.h) / 2;
+//
+//         SDL_Point center = { dst.w / 2, dst.h / 2 };
+//         SDL_RenderCopyEx(renderer, t, NULL, &dst, 90.0, &center, SDL_FLIP_NONE);
+//         SDL_DestroyTexture(t);
+//     }
+//     SDL_FreeSurface(s);
+// }
+
+// --- Draw vertical text (rotated 90°) ---
+void drawVerticalText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Rect rect, SDL_Color color)
 {
     if (!font || !text) return;
 
-    SDL_Color white = {255,255,255,255};
-    SDL_Surface* s = TTF_RenderText_Solid(font, text, white);
+    SDL_Surface* s = TTF_RenderText_Solid(font, text, color);
     if (!s) return;
 
     SDL_Texture* t = SDL_CreateTextureFromSurface(renderer, s);
-    if (t)
-    {
-        SDL_Rect dst;
-        dst.w = s->w;
-        dst.h = s->h;
-        dst.x = rect.x + (rect.w - dst.w) / 2;
-        dst.y = rect.y + (rect.h - dst.h) / 2;
+    if (!t) { SDL_FreeSurface(s); return; }
 
-        SDL_Point center = { dst.w / 2, dst.h / 2 };
-        SDL_RenderCopyEx(renderer, t, NULL, &dst, 90.0, &center, SDL_FLIP_NONE);
-        SDL_DestroyTexture(t);
-    }
+    SDL_Rect dst;
+    dst.w = s->w;
+    dst.h = s->h;
+    dst.x = rect.x + (rect.w - dst.w) / 2;
+    dst.y = rect.y + (rect.h - dst.h) / 2;
+
+    SDL_Point center = { dst.w / 2, dst.h / 2 };
+    SDL_RenderCopyEx(renderer, t, NULL, &dst, 90.0, &center, SDL_FLIP_NONE);
+
+    SDL_DestroyTexture(t);
     SDL_FreeSurface(s);
 }
+
+
 
 // --- Render full UI ---
 void uiRender(SDL_Renderer* renderer, TTF_Font* font, SDL_Texture* skin, const char* songText)
@@ -146,11 +172,14 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, SDL_Texture* skin, const c
     drawRect(renderer, miscPlaylist, 0,150,150,150);
     drawRect(renderer, ListOptions, 150,150,0,150);
 
-    // --- Vertical text ---
-    drawVerticalText(renderer, font, songText, songInfo);
-    drawVerticalText(renderer, font, "03:42", playtimeInfo);
-    drawVerticalText(renderer, font, "192", kbpsInfo);
-    drawVerticalText(renderer, font, "44", kHzInfo);
+    // --- Vertical text with green color ---
+    SDL_Color green = {0, 255, 0, 255};
+
+    drawVerticalText(renderer, font, songText, songInfo, green);
+    drawVerticalText(renderer, font, "03:42", playtimeInfo, green);
+    drawVerticalText(renderer, font, "192", kbpsInfo, green);
+    drawVerticalText(renderer, font, "44", kHzInfo, green);
+
 
     // --- Playlist ---
     renderPlaylist(renderer, font);
