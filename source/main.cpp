@@ -31,8 +31,11 @@ int main()
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND); // important for transparency
 
     // --- Load resources ---
-    TTF_Font* font = TTF_OpenFont("romfs:/fonts/arial.ttf", 24);
+    TTF_Font* font = TTF_OpenFont("romfs:/fonts/arial.ttf", 32);
     if (!font) printf("Failed to load font!\n");
+
+    TTF_Font* fontBig = TTF_OpenFont("romfs:/fonts/arial.ttf", 82);
+    if (!fontBig) printf("Failed to load BIG font!\n");
 
     SDL_Texture* skin = IMG_LoadTexture(renderer, "romfs:/skins/default_skin.png");
     if (!skin) printf("Failed to load skin: %s\n", SDL_GetError());
@@ -123,7 +126,7 @@ int main()
         }
 
 
-        uiRender(renderer, font, skin, songText);   // UI background
+        uiRender(renderer, font, fontBig, skin, songText);   // UI background
         renderPlaylist(renderer, font);            // Playlist
         fileBrowserRender(renderer, font);         // Browser overlay
 
@@ -134,6 +137,7 @@ int main()
     // --- Cleanup ---
     if (font) TTF_CloseFont(font);
     if (skin) SDL_DestroyTexture(skin);
+    if (fontBig) TTF_CloseFont(fontBig);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
 

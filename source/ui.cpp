@@ -16,10 +16,14 @@ void drawRect(SDL_Renderer* renderer, SDL_Rect r, Uint8 rC, Uint8 gC, Uint8 bC, 
     SDL_RenderFillRect(renderer, &r);
 }
 
-
-
-// --- Draw vertical text (rotated 90°), left-aligned inside rectangle ---
-void drawVerticalText(SDL_Renderer* renderer, TTF_Font* font, const char* text, SDL_Rect rect, SDL_Color color)
+void drawVerticalText(SDL_Renderer* renderer,
+                      TTF_Font* font,
+                      const char* text,
+                      SDL_Rect rect,
+                      SDL_Color color,
+                      int paddingX,          // manual horizontal offset
+                      int paddingY,          // manual vertical offset
+                      VerticalAlign alignY)  // vertical alignment inside rect
 {
     if (!font || !text) return;
 
@@ -33,11 +37,25 @@ void drawVerticalText(SDL_Renderer* renderer, TTF_Font* font, const char* text, 
     dst.w = s->w;
     dst.h = s->h;
 
-    // Offset x so rotated text fits inside the rectangle
-    dst.x = rect.x + rect.w - dst.h; // <-- use text height because rotation swaps width/height
-    dst.y = rect.y;
+    // Horizontal position (after rotation)
+    dst.x = rect.x + rect.w - dst.h + paddingX;
 
-    // Rotate around top-left of unrotated text
+    // Vertical alignment inside the UI rectangle
+    switch (alignY)
+    {
+        case ALIGN_TOP:
+            dst.y = rect.y + paddingY;
+            break;
+
+        case ALIGN_CENTER:
+            dst.y = rect.y + (rect.h - dst.w) / 2 + paddingY;
+            break;
+
+        case ALIGN_BOTTOM:
+            dst.y = rect.y + rect.h - dst.w - paddingY;
+            break;
+    }
+
     SDL_Point center = {0, 0};
     SDL_RenderCopyEx(renderer, t, NULL, &dst, 90.0, &center, SDL_FLIP_NONE);
 
@@ -45,11 +63,22 @@ void drawVerticalText(SDL_Renderer* renderer, TTF_Font* font, const char* text, 
     SDL_FreeSurface(s);
 }
 
-
+// Backward-compatible wrapper (old calls still work)
+void drawVerticalText(SDL_Renderer* renderer,
+                      TTF_Font* font,
+                      const char* text,
+                      SDL_Rect rect,
+                      SDL_Color color)
+{
+    drawVerticalText(renderer, font, text, rect, color,
+                     16,          // default paddingX
+                     0,           // default paddingY
+                     ALIGN_TOP);  // default alignment
+}
 
 
 // --- Render full UI ---
-void uiRender(SDL_Renderer* renderer, TTF_Font* font, SDL_Texture* skin, const char* songText)
+void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, const char* songText)
 {
     // Clear screen
     SDL_RenderClear(renderer);
@@ -156,10 +185,27 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, SDL_Texture* skin, const c
     // --- Vertical text with green color ---
     SDL_Color green = {0, 255, 0, 255};
 
-    drawVerticalText(renderer, font, songText, songInfo, green);
-    drawVerticalText(renderer, font, "03:42", playtimeInfo, green);
-    drawVerticalText(renderer, font, "192", kbpsInfo, green);
-    drawVerticalText(renderer, font, "44", kHzInfo, green);
+//    drawVerticalText(renderer, font, songText, songInfo, green);
+      drawVerticalText(renderer, font, songText, songInfo, green,
+                   16,      // small horizontal padding
+                   10,      // small top padding
+                   ALIGN_TOP);
+
+//    drawVerticalText(renderer, fontBig, "03:42", playtimeInfo, green); // BIG size
+    drawVerticalText(renderer, fontBig, "03:42", playtimeInfo, green,
+                     85,      // 👈 BIG horizontal push
+                     0,
+                     ALIGN_CENTER);
+
+    drawVerticalText(renderer, font, "192", kbpsInfo, green,
+                 20,      // small horizontal padding
+                 10,      // small top padding
+                 ALIGN_TOP);
+
+    drawVerticalText(renderer, font, "44", kHzInfo, green,
+                 20,      // small horizontal padding
+                 10,      // small top padding
+                 ALIGN_TOP);
 
 
     // --- Playlist ---
