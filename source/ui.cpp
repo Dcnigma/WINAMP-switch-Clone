@@ -34,6 +34,55 @@ static const float PEAK_FALL_SPEED = 2.0f;        // pixels per frame
 extern float g_fftInput[FFT_SIZE];
 
 
+static void drawVolumeBar(SDL_Renderer* renderer,
+                          SDL_Texture* volumeTex,
+                          SDL_Rect barRect)
+{
+    if (!renderer || !volumeTex) return;
+
+    // --- 1. Get volume (0.0 - 1.0) ---
+    float volume = playerGetVolume();   // 0.0 = min, 1.0 = max
+    if (volume < 0.0f) volume = 0.0f;
+    if (volume > 1.0f) volume = 1.0f;
+
+    // --- 2. Convert to sprite index (0–27) ---
+    const int totalLevels = 28;
+    int level = (int)(volume * (totalLevels - 1) + 0.5f);
+
+    const int colorStartX = 76;   // first color frame
+    const int frameW = 31;
+    const int frameH = 273;
+    const int frameGap = 31;      // gap between color frames
+
+    if (level < 0) level = 0;
+    if (level >= totalLevels) level = totalLevels - 1;
+
+    // Flip: 0 = bottom (red), max = top (green)
+    int srcX = colorStartX + level * (frameW + frameGap);
+
+    SDL_Rect srcBar = { srcX, 0, frameW, frameH };
+    SDL_RenderCopy(renderer, volumeTex, &srcBar, &barRect);
+
+    // --- 3. Draw slider knob ---
+    SDL_Rect srcKnob = { 4, 66, 38, 52 };
+
+    int knobTravel = barRect.h - srcKnob.h;
+
+    // Loud = bottom, Quiet = top
+    int knobOffset = (int)(volume * knobTravel);
+
+    SDL_Rect dstKnob = {
+        barRect.x + (barRect.w - srcKnob.w) / 2,
+        barRect.y + knobOffset,
+        srcKnob.w,
+        srcKnob.h
+    };
+
+    SDL_RenderCopy(renderer, volumeTex, &srcKnob, &dstKnob);
+}
+
+
+
 static void drawProgressBar(SDL_Renderer* renderer,
                             SDL_Texture* texProgIndicator,
                             SDL_Rect barRect,
@@ -391,7 +440,7 @@ void formatTime(int seconds, char* out, size_t size)
 
 
 // --- Render full UI ---
-void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, const char* songText)
+void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, SDL_Texture* texVolume, const char* songText)
 {
   if (!fftInitialized)
   {
@@ -465,7 +514,13 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     SDL_Rect eqPreset2     = {1112, 153, 73,131};
     SDL_Rect eqPreset3     = {1112, 851, 73,170};
 
-    SDL_Rect volumeSlider  = {1551, 421,40,264};
+//    SDL_Rect volumeSlider  = {1551, 421,40,264};
+
+    SDL_Rect volumeBarRect = { 1551, 421, 40, 264 }; // adjust to your skin
+
+    drawVolumeBar(renderer, texVolume, volumeBarRect);
+
+
     SDL_Rect panSlider     = {1551, 698,40,145};
 
     SDL_Rect addPlaylist   = {70,  42,100,100};
@@ -513,7 +568,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawRect(renderer, eqPreset2, 100,200,100,150);
     drawRect(renderer, eqPreset3, 100,100,100,150);
 
-    drawRect(renderer, volumeSlider, 150,150,0,150);
+//    drawRect(renderer, volumeSlider, 150,150,0,150);
     drawRect(renderer, panSlider, 0,150,150,150);
 
     drawRect(renderer, addPlaylist, 150,150,0,150);

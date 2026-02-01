@@ -46,6 +46,10 @@ int main()
         printf("Failed to load prgBindicator.png: %s\n", IMG_GetError());
     }
 
+    SDL_Texture* texVolume = IMG_LoadTexture(renderer, "romfs:/skins/VOLUME.png");
+    if (!texVolume)
+        printf("Failed to load volume.png: %s\n", IMG_GetError());
+
     // --- At boot ---
     playlistClear();
     mp3ClearMetadata();
@@ -70,6 +74,23 @@ int main()
     {
         padUpdate(&pad);
         u64 down = padGetButtonsDown(&pad);
+
+
+
+        // ---------------------------
+        // Volume Control (Left Stick)
+        // ---------------------------
+        const float VOL_STEP = 0.05f; // 5% per press
+
+        if (down & HidNpadButton_StickLUp)
+        {
+            playerAdjustVolume(+VOL_STEP);
+        }
+
+        if (down & HidNpadButton_StickLDown)
+        {
+            playerAdjustVolume(-VOL_STEP);
+        }
 
         playerUpdate();
         // Exit
@@ -132,7 +153,7 @@ int main()
         }
 
 
-        uiRender(renderer, font, fontBig, skin, texProgIndicator, songText);   // UI background
+        uiRender(renderer, font, fontBig, skin, texProgIndicator, texVolume, songText);   // UI background
 //        uiRender(renderer, font, smallFont, texProgIndicator, currentTitle);
 
         renderPlaylist(renderer, font);            // Playlist

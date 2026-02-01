@@ -32,6 +32,27 @@ static void postmixCallback(void* udata, Uint8* stream, int len)
 
 
 
+static float g_volume = 1.0f; // 0.0 - 1.0
+
+void playerSetVolume(float v)
+{
+    if (v < 0.0f) v = 0.0f;
+    if (v > 1.0f) v = 1.0f;
+    g_volume = v;
+
+    Mix_VolumeMusic((int)(v * MIX_MAX_VOLUME));
+}
+
+float playerGetVolume()
+{
+    return g_volume;
+}
+
+void playerAdjustVolume(float delta)
+{
+    playerSetVolume(g_volume + delta);
+}
+
 
 /* ---------- Callback when a song ends ---------- */
 static void musicFinishedCallback()
@@ -55,6 +76,7 @@ void playerInit()
     Mix_SetPostMix(postmixCallback, NULL);
 
     Mix_HookMusicFinished(musicFinishedCallback);
+    playerSetVolume(1.0f);
 }
 
 /* ---------- Play a track ---------- */
