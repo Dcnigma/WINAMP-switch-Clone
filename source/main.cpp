@@ -40,6 +40,12 @@ int main()
     SDL_Texture* skin = IMG_LoadTexture(renderer, "romfs:/skins/default_skin.png");
     if (!skin) printf("Failed to load skin: %s\n", SDL_GetError());
 
+    SDL_Texture* texProgIndicator = IMG_LoadTexture(renderer, "romfs:/skins/prgBindicator.png");
+    if (!texProgIndicator)
+    {
+        printf("Failed to load prgBindicator.png: %s\n", IMG_GetError());
+    }
+
     // --- At boot ---
     playlistClear();
     mp3ClearMetadata();
@@ -126,7 +132,9 @@ int main()
         }
 
 
-        uiRender(renderer, font, fontBig, skin, songText);   // UI background
+        uiRender(renderer, font, fontBig, skin, texProgIndicator, songText);   // UI background
+//        uiRender(renderer, font, smallFont, texProgIndicator, currentTitle);
+
         renderPlaylist(renderer, font);            // Playlist
         fileBrowserRender(renderer, font);         // Browser overlay
 

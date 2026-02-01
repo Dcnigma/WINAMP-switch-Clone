@@ -8,9 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-
 #include "kiss_fftr.h"
-
 
 #define FB_W 1920
 #define FB_H 1080
@@ -29,14 +27,98 @@ static int  scrollPause  = 0;
 static bool scrollForward = true;
 static char lastSongText[256] = {0};
 
-//#define SPECTRUM_BARS 20
-
-static int spectrumValues[SPECTRUM_BARS] = {0};
+//static int spectrumValues[SPECTRUM_BARS] = {0};
 static float spectrumPeaks[SPECTRUM_BARS]  = {0}; // use float for smooth decay
 static const float PEAK_FALL_SPEED = 2.0f;        // pixels per frame
 
 extern float g_fftInput[FFT_SIZE];
-//fftCfg = kiss_fftr_alloc(FFT_SIZE, 0, NULL, NULL);
+
+
+static void drawProgressBar(SDL_Renderer* renderer,
+                            SDL_Texture* texProgIndicator,
+                            SDL_Rect barRect,
+                            SDL_Rect indicatorBaseRect)
+{
+    if (!renderer || !texProgIndicator) return;
+
+    SDL_Rect dst = indicatorBaseRect;  // default = start position (top)
+
+    if (playerIsPlaying())
+    {
+        int currentSec = playerGetElapsedSeconds();
+        int totalSec   = playerGetTrackLength();
+
+        if (totalSec > 0)
+        {
+            float progress = (float)currentSec / (float)totalSec;
+            if (progress < 0.0f) progress = 0.0f;
+            if (progress > 1.0f) progress = 1.0f;
+
+            int travel = barRect.h - indicatorBaseRect.h;
+            int offset = (int)(progress * travel);
+
+            dst.y = barRect.y + offset;   // move while playing
+        }
+    }
+    else
+    {
+        // No song → indicator stays at start (top of bar)
+        dst.y = barRect.y;
+    }
+
+    SDL_RenderCopy(renderer, texProgIndicator, NULL, &dst);
+}
+
+// Draw Mono / Stereo indicators
+// Call this from uiRender()
+static void drawMonoStereo(SDL_Renderer* renderer, TTF_Font* font, const Mp3MetadataEntry* md, SDL_Rect monoRect, SDL_Rect stereoRect)
+{
+    if (!renderer || !font) return;
+
+    // --- Determine which one is active ---
+    bool monoActive   = false;
+    bool stereoActive = false;
+
+    if (md)
+    {
+        if (md->channels == 1)
+            monoActive = true;
+        else if (md->channels == 2)
+            stereoActive = true;
+    }
+
+    // --- Smooth glow animation using sine wave ---
+    static float glowTime = 0.0f;
+    glowTime += 0.05f;   // speed of glow (lower = slower pulse)
+
+    float glowWave = (sinf(glowTime) + 1.0f) * 0.5f;  // 0 → 1 smoothly
+
+    // Brightness range (Winamp-ish green pulse)
+    Uint8 glowGreen = (Uint8)(130 + 115 * glowWave);   // 140–255
+
+    // --- Mono text ---
+    SDL_Color monoColor = {255, 255, 255, 255}; // default white
+    if (monoActive)
+    {
+        monoColor.r = 0;
+        monoColor.g = glowGreen;
+        monoColor.b = 0;
+    }
+    drawVerticalText(renderer, font, "Mono", monoRect, monoColor);
+
+    // --- Stereo text ---
+    SDL_Color stereoColor = {255, 255, 255, 255}; // default white
+    if (stereoActive)
+    {
+        stereoColor.r = 0;
+        stereoColor.g = glowGreen;
+        stereoColor.b = 0;
+    }
+    drawVerticalText(renderer, font, "Stereo", stereoRect, stereoColor);
+}
+
+
+
 
 void uiInitFFT()
 {
@@ -309,7 +391,7 @@ void formatTime(int seconds, char* out, size_t size)
 
 
 // --- Render full UI ---
-void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, const char* songText)
+void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, const char* songText)
 {
   if (!fftInitialized)
   {
@@ -333,16 +415,22 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     }
 
     // --- UI RECTANGLES ---
-    SDL_Rect topBar        = {1837,   0,  83,1080};
-    SDL_Rect mainPlayer    = {1287,   0, 558,1080};
+//    SDL_Rect topBar        = {1837,   0,  83,1080};
+//    SDL_Rect mainPlayer    = {1287,   0, 558,1080};
     SDL_Rect eqSection     = {650,    0, 654,1080};
-    SDL_Rect playlist      = {0,      0, 636,1080};
-    SDL_Rect progBar       = {1467,  64,  61, 982};
+//    SDL_Rect playlist      = {0,      0, 636,1080};
+
+
+    SDL_Rect progBar        = {1467,  64,  61, 982};
+    SDL_Rect progIndicatorR = {1469,  577, 62, 113};
+
+    drawProgressBar(renderer, texProgIndicator, progBar, progIndicatorR);
+
     SDL_Rect songInfo      = {1721, 429, 68, 614};
     SDL_Rect playtimeInfo  = {1694, 178,100,221};
     SDL_Rect kbpsInfo      = {1639, 426, 57, 74};
     SDL_Rect kHzInfo       = {1639, 600, 57, 55};
-    SDL_Rect playlistFiles = {215,   50,310,950};
+//    SDL_Rect playlistFiles = {215,   50,310,950};
 
     SDL_Rect prevButton    = {1340,  60,100, 90};
     SDL_Rect playButton    = {1340, 151,100, 90};
@@ -352,6 +440,14 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     SDL_Rect ejectButton   = {1340, 532,100, 90};
     SDL_Rect shuffleButton = {1357, 642, 72,182};
     SDL_Rect repeatButton  = {1357, 825, 72,115};
+
+    SDL_Rect monoRect   = {1670, 835, 30, 90};
+    SDL_Rect stereoRect = {1670, 940, 30, 90};
+
+    const Mp3MetadataEntry* md = mp3GetTrackMetadata(playerGetCurrentTrackIndex());
+    drawMonoStereo(renderer, font, md, monoRect, stereoRect);
+
+
 
     SDL_Rect eqBand1       = {720,   91,346, 33};
     SDL_Rect eqBand2       = {720,  315,346, 33};
@@ -381,16 +477,16 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     SDL_Rect TotPylDurat   = {109, 512,63, 358};
 
     // --- Draw rectangles with transparency ---
-    drawRect(renderer, topBar, 200,0,0,150);
-    drawRect(renderer, mainPlayer, 0,100,200,150);
+//    drawRect(renderer, topBar, 200,0,0,150);
+//    drawRect(renderer, mainPlayer, 0,100,200,150);
     drawRect(renderer, eqSection, 0,200,100,150);
-    drawRect(renderer, playlist, 200,200,0,150);
-    drawRect(renderer, progBar, 150,0,200,150);
-    drawRect(renderer, songInfo, 100,100,100,150);
-    drawRect(renderer, playtimeInfo, 0,200,100,150);
-    drawRect(renderer, kbpsInfo, 200,200,0,150);
-    drawRect(renderer, kHzInfo, 150,0,200,150);
-    drawRect(renderer, playlistFiles, 100,100,100,150);
+//    drawRect(renderer, playlist, 200,200,0,150);
+//    drawRect(renderer, progBar, 150,0,200,150);
+//    drawRect(renderer, songInfo, 100,100,100,150);
+//    drawRect(renderer, playtimeInfo, 0,200,100,150);
+//    drawRect(renderer, kbpsInfo, 200,200,0,150);
+//    drawRect(renderer, kHzInfo, 150,0,200,150);
+//    drawRect(renderer, playlistFiles, 100,100,100,150);
 
     drawRect(renderer, prevButton, 255,0,0,150);
     drawRect(renderer, nextButton, 0,255,0,150);
@@ -425,8 +521,8 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawRect(renderer, selPlaylist, 150,150,0,150);
     drawRect(renderer, miscPlaylist, 0,150,150,150);
     drawRect(renderer, ListOptions, 150,150,0,150);
-    drawRect(renderer, Duration, 150,150,0,150);
-    drawRect(renderer, TotPylDurat, 255,0,0,150);
+//    drawRect(renderer, Duration, 150,150,0,150);
+//    drawRect(renderer, TotPylDurat, 255,0,0,150);
 
     // Example rectangle in your UI
 //    SDL_Rect spectrumRect = {1592, 92, 93, 306};
@@ -439,9 +535,12 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
 
 
     SDL_Color green = {0, 255, 0, 255};
+//    SDL_Color white = {0, 255, 255, 255};
 
     char scrollingSong[64];
     getScrollingText(songText, scrollingSong, sizeof(scrollingSong));
+
+
 
     drawVerticalText(renderer, font, scrollingSong, songInfo, green,
                      16,
@@ -454,25 +553,36 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
                       0,
                       ALIGN_CENTER);
 
-     int playing = playerGetCurrentTrackIndex();
-     if (playing >= 0)
-     {
-         const Mp3MetadataEntry* md = mp3GetTrackMetadata(playing);
-         if (md)
-         {
-             char kbpsText[8];
-             char kHzText[8];
+    int playing = playerGetCurrentTrackIndex();
+    if (playing >= 0)
+    {
+        const Mp3MetadataEntry* md = mp3GetTrackMetadata(playing);
+        if (md)
+        {
+            char kbpsText[8];
+            char kHzText[8];
 
-             snprintf(kbpsText, sizeof(kbpsText), "%d", md->bitrateKbps);
-             snprintf(kHzText, sizeof(kHzText), "%d", md->sampleRateKHz);
+            snprintf(kbpsText, sizeof(kbpsText), "%d", md->bitrateKbps);
+            snprintf(kHzText, sizeof(kHzText), "%d", md->sampleRateKHz);
 
-             drawVerticalText(renderer, font, kbpsText, kbpsInfo, green,
-                              20, 10, ALIGN_TOP);
+            // --- Subtle glow animation ---
+            static float infoGlowTime = 0.0f;
+            infoGlowTime += 0.04f;  // slower than mono/stereo
 
-             drawVerticalText(renderer, font, kHzText, kHzInfo, green,
-                              20, 10, ALIGN_TOP);
-         }
-     }
+            float glowWave = (sinf(infoGlowTime) + 1.0f) * 0.5f;  // 0–1
+
+            Uint8 greenLevel = (Uint8)(180 + 75 * glowWave); // soft range: 180–255
+
+            SDL_Color infoGreen = {0, greenLevel, 0, 255};
+
+            drawVerticalText(renderer, font, kbpsText, kbpsInfo, infoGreen,
+                             20, 10, ALIGN_TOP);
+
+            drawVerticalText(renderer, font, kHzText, kHzInfo, infoGreen,
+                             20, 10, ALIGN_TOP);
+        }
+    }
+
 
 
      drawVerticalText(renderer, font, liveTime, Duration, green,

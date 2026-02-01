@@ -85,7 +85,9 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
 
 
 // --- Read bitrate & sample rate from first MPEG frame ---
-static void readMp3BitrateAndRate(const char* path, int& outBitrateKbps, int& outSampleRateKHz)
+//static void readMp3BitrateAndRate(const char* path, int& outBitrateKbps, int& outSampleRateKHz)
+static void readMp3BitrateAndRate(const char* path, int& outBitrateKbps, int& outSampleRateKHz, int& outChannels)
+
 {
     outBitrateKbps = 0;  // 0 = unknown / not playing
     outSampleRateKHz = 0;
@@ -133,6 +135,9 @@ static void readMp3BitrateAndRate(const char* path, int& outBitrateKbps, int& ou
 
         outBitrateKbps   = bitrates[version][layer-1][brIndex];
         outSampleRateKHz = sampleRates[version][srIndex]/1000;
+
+        outChannels = ((buf[3] & 0x01) == 0) ? 2 : 1;
+
     }
 
     fclose(f);
@@ -167,7 +172,8 @@ bool mp3AddToPlaylist(const char* path)
     readMp3Metadata(path, entry);
 
     // read bitrate & sample rate (zero if unknown)
-    readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz);
+    readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz, entry.channels);
+
 
     // duration using actual bitrate (works for CBR, approximate for VBR)
     entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
@@ -188,7 +194,8 @@ void mp3ReloadAllMetadata()
 
         Mp3MetadataEntry entry;
         readMp3Metadata(path, entry);
-        readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz);
+        readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz, entry.channels);
+
         entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
 
         playlistMetadata.push_back(entry);
@@ -212,7 +219,8 @@ bool mp3Load(const char* path)
 
     Mp3MetadataEntry entry;
     readMp3Metadata(path, entry);
-    readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz);
+    readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz, entry.channels);
+
     entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
 
     playlistAdd(path);

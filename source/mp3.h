@@ -10,7 +10,7 @@ struct Mp3MetadataEntry
     char title[128];
     char artist[128];
     int durationSeconds;
-
+    int channels;
     int bitrateKbps;    // NEW: bitrate in kbps
     int sampleRateKHz;  // NEW: sample rate in kHz
 };
