@@ -7,6 +7,7 @@
 #include <SDL_image.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #define FB_W 1920
 #define FB_H 1080
@@ -16,6 +17,70 @@ static int  scrollTimer  = 0;
 static int  scrollPause  = 0;
 static bool scrollForward = true;
 static char lastSongText[256] = {0};
+
+#define SPECTRUM_BARS 20
+
+static int spectrumValues[SPECTRUM_BARS] = {0};
+static float spectrumPeaks[SPECTRUM_BARS]  = {0}; // use float for smooth decay
+static const float PEAK_FALL_SPEED = 2.0f;        // pixels per frame
+
+// Call this in uiRender()
+static void drawWinampSpectrumVertical(SDL_Renderer* renderer, SDL_Rect rect)
+{
+    if (!renderer) return;
+
+    // --- Demo/fake audio data (replace with real FFT values later) ---
+    for (int i = 0; i < SPECTRUM_BARS; i++)
+        spectrumValues[i] = rand() % 256;
+
+    int barHeight = rect.h / SPECTRUM_BARS;
+    int barSpacing = 1;
+
+    for (int i = 0; i < SPECTRUM_BARS; i++)
+    {
+        // Map amplitude to pixel width
+        int barWidth = (spectrumValues[i] * rect.w) / 255;
+
+        // --- Update peak ---
+        float targetPeak = (spectrumValues[i] * rect.w) / 255.0f;
+        if (targetPeak > spectrumPeaks[i])
+            spectrumPeaks[i] = targetPeak;
+        else
+        {
+            spectrumPeaks[i] -= PEAK_FALL_SPEED;
+            if (spectrumPeaks[i] < 0) spectrumPeaks[i] = 0;
+        }
+
+        // --- Draw main bar ---
+        SDL_Color color;
+        float t = (float)i / (SPECTRUM_BARS - 1);
+        color.r = (Uint8)(255 * (1 - t));
+        color.g = (Uint8)(255 * t);
+        color.b = 0;
+        color.a = 255;
+
+        SDL_Rect barRect = {
+            rect.x,
+            rect.y + rect.h - (i + 1) * barHeight,
+            barWidth,
+            barHeight - barSpacing
+        };
+        SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+        SDL_RenderFillRect(renderer, &barRect);
+
+        // --- Draw peak cap (white) ---
+        SDL_Rect peakRect = {
+            rect.x,
+            rect.y + rect.h - (i + 1) * barHeight + (barHeight - 2),
+            (int)spectrumPeaks[i],
+            2
+        };
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        SDL_RenderFillRect(renderer, &peakRect);
+    }
+}
+
+
 
 static void getScrollingText(const char* fullText, char* out, size_t outSize)
 {
@@ -284,6 +349,9 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawRect(renderer, Duration, 150,150,0,150);
     drawRect(renderer, TotPylDurat, 255,0,0,150);
 
+    // Example rectangle in your UI
+    SDL_Rect spectrumRect = {1592, 92, 93, 306};
+    drawWinampSpectrumVertical(renderer, spectrumRect);
 
     SDL_Color green = {0, 255, 0, 255};
 
