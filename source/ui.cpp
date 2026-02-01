@@ -9,8 +9,19 @@
 #include <string.h>
 #include <math.h>
 
+#include "kiss_fftr.h"
+
+
 #define FB_W 1920
 #define FB_H 1080
+
+#define FFT_SIZE 1024
+#define SPECTRUM_BARS 20
+
+static kiss_fftr_cfg fftCfg = NULL;
+static kiss_fft_cpx fftOut[FFT_SIZE/2];
+static float fftMag[FFT_SIZE/2];
+static float bandValues[SPECTRUM_BARS];
 
 static int  scrollOffset = 0;
 static int  scrollTimer  = 0;
@@ -18,31 +29,110 @@ static int  scrollPause  = 0;
 static bool scrollForward = true;
 static char lastSongText[256] = {0};
 
-#define SPECTRUM_BARS 20
+//#define SPECTRUM_BARS 20
 
 static int spectrumValues[SPECTRUM_BARS] = {0};
 static float spectrumPeaks[SPECTRUM_BARS]  = {0}; // use float for smooth decay
 static const float PEAK_FALL_SPEED = 2.0f;        // pixels per frame
 
-// Call this in uiRender()
-static void drawWinampSpectrumVertical(SDL_Renderer* renderer, SDL_Rect rect)
+extern float g_fftInput[FFT_SIZE];
+//fftCfg = kiss_fftr_alloc(FFT_SIZE, 0, NULL, NULL);
+
+void uiInitFFT()
 {
-    if (!renderer) return;
+    if (!fftCfg)
+        fftCfg = kiss_fftr_alloc(FFT_SIZE, 0, NULL, NULL);
+}
 
-    // --- Demo/fake audio data (replace with real FFT values later) ---
-    for (int i = 0; i < SPECTRUM_BARS; i++)
-        spectrumValues[i] = rand() % 256;
+static bool fftInitialized = false;
 
-    int barHeight = rect.h / SPECTRUM_BARS;
+
+static void computeSpectrum()
+{
+    kiss_fftr(fftCfg, g_fftInput, fftOut);
+
+    for (int i = 0; i < FFT_SIZE/2; i++)
+    {
+        float real = fftOut[i].r;
+        float imag = fftOut[i].i;
+        fftMag[i] = sqrtf(real*real + imag*imag);
+    }
+
+    int binsPerBand = (FFT_SIZE/2) / SPECTRUM_BARS;
+
+    for (int b = 0; b < SPECTRUM_BARS; b++)
+    {
+        float sum = 0;
+        for (int j = 0; j < binsPerBand; j++)
+        {
+            sum += fftMag[b * binsPerBand + j];
+        }
+
+        float avg = sum / binsPerBand;
+
+        /* Convert to log scale (more natural for audio) */
+        avg = log10f(avg + 1.0f) * 0.6f;   // tweak 0.6 to taste
+
+        if (avg > 1.0f) avg = 1.0f;
+        if (avg < 0.0f) avg = 0.0f;
+
+        bandValues[b] = avg;
+
+    }
+}
+
+// Call this in uiRender()
+static void drawWinampSpectrumVertical(SDL_Renderer* renderer, SDL_Rect rect, const float* bands)
+{
+    if (!renderer || !bands) return;
+
+    int barHeight  = rect.h / SPECTRUM_BARS;
     int barSpacing = 1;
 
     for (int i = 0; i < SPECTRUM_BARS; i++)
     {
-        // Map amplitude to pixel width
-        int barWidth = (spectrumValues[i] * rect.w) / 255;
+        // Flip frequency order (bass at top)
+        int bandIndex = SPECTRUM_BARS - 1 - i;
 
-        // --- Update peak ---
-        float targetPeak = (spectrumValues[i] * rect.w) / 255.0f;
+        float value = bands[bandIndex];
+        if (value < 0.0f) value = 0.0f;
+        if (value > 1.0f) value = 1.0f;
+
+        int filledWidth = (int)(value * rect.w);
+
+        int y = rect.y + rect.h - (i + 1) * barHeight;
+
+        /* ---- Draw colored bar with gradient ---- */
+        for (int x = 0; x < filledWidth; x++)
+        {
+            float t = (float)x / rect.w;   // 0 = quiet side, 1 = loud edge
+
+            SDL_Color color;
+
+            if (t < 0.75f)   // mostly green zone
+            {
+                float k = t / 0.75f;
+                color.r = (Uint8)(k * 255);
+                color.g = 255;
+                color.b = 0;
+            }
+            else             // red only near the peak
+            {
+                float k = (t - 0.75f) / 0.25f;
+                color.r = 255;
+                color.g = (Uint8)((1.0f - k) * 255);
+                color.b = 0;
+            }
+
+            SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, 255);
+
+            SDL_Rect slice = { rect.x + x, y, 1, barHeight - barSpacing };
+            SDL_RenderFillRect(renderer, &slice);
+        }
+
+        /* ---- Peak cap handling ---- */
+        float targetPeak = value * rect.w;
+
         if (targetPeak > spectrumPeaks[i])
             spectrumPeaks[i] = targetPeak;
         else
@@ -51,31 +141,15 @@ static void drawWinampSpectrumVertical(SDL_Renderer* renderer, SDL_Rect rect)
             if (spectrumPeaks[i] < 0) spectrumPeaks[i] = 0;
         }
 
-        // --- Draw main bar ---
-        SDL_Color color;
-        float t = (float)i / (SPECTRUM_BARS - 1);
-        color.r = (Uint8)(255 * (1 - t));
-        color.g = (Uint8)(255 * t);
-        color.b = 0;
-        color.a = 255;
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
 
-        SDL_Rect barRect = {
-            rect.x,
-            rect.y + rect.h - (i + 1) * barHeight,
-            barWidth,
+        SDL_Rect peakRect = {
+            rect.x + (int)spectrumPeaks[i],
+            y,
+            2,
             barHeight - barSpacing
         };
-        SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-        SDL_RenderFillRect(renderer, &barRect);
 
-        // --- Draw peak cap (white) ---
-        SDL_Rect peakRect = {
-            rect.x,
-            rect.y + rect.h - (i + 1) * barHeight + (barHeight - 2),
-            (int)spectrumPeaks[i],
-            2
-        };
-        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
         SDL_RenderFillRect(renderer, &peakRect);
     }
 }
@@ -237,6 +311,11 @@ void formatTime(int seconds, char* out, size_t size)
 // --- Render full UI ---
 void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, const char* songText)
 {
+  if (!fftInitialized)
+  {
+      uiInitFFT();
+      fftInitialized = true;
+  }
 
     // --- Live playtime string ---
     char liveTime[16];
@@ -350,8 +429,14 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawRect(renderer, TotPylDurat, 255,0,0,150);
 
     // Example rectangle in your UI
-    SDL_Rect spectrumRect = {1592, 92, 93, 306};
-    drawWinampSpectrumVertical(renderer, spectrumRect);
+//    SDL_Rect spectrumRect = {1592, 92, 93, 306};
+//    drawWinampSpectrumVertical(renderer, spectrumRect);
+
+    computeSpectrum();
+
+    SDL_Rect spectrumRect = {1592, 90, 93, 306};
+    drawWinampSpectrumVertical(renderer, spectrumRect, bandValues);
+
 
     SDL_Color green = {0, 255, 0, 255};
 

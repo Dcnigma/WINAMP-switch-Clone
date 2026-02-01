@@ -4,12 +4,34 @@
 #include <SDL_mixer.h>
 #include <stdio.h>
 #include <switch.h>    // ✅ needed for u64 and svcGetSystemTick
+#include <math.h>
+
+#define FFT_SIZE 1024
+
+float g_fftInput[FFT_SIZE] = {0};   // waveform input
+static int fftWritePos = 0;         // rolling write index
 
 static Mix_Music* currentMusic = nullptr;
 static int currentTrackIndex = -1;
 static bool musicFinished = false;
 static u64 trackStartTick = 0;   // Switch system tick
 static int currentTrackLength = 0; // seconds
+
+
+static void postmixCallback(void* udata, Uint8* stream, int len)
+{
+    int16_t* samples = (int16_t*)stream;
+    int sampleCount = len / sizeof(int16_t);
+
+    for (int i = 0; i < sampleCount; i += 2) // stereo → take left channel
+    {
+        g_fftInput[fftWritePos] = samples[i] / 32768.0f; // -1..1 float
+        fftWritePos = (fftWritePos + 1) % FFT_SIZE;
+    }
+}
+
+
+
 
 /* ---------- Callback when a song ends ---------- */
 static void musicFinishedCallback()
@@ -29,6 +51,8 @@ void playerInit()
     {
         printf("Mix_OpenAudio error: %s\n", Mix_GetError());
     }
+
+    Mix_SetPostMix(postmixCallback, NULL);
 
     Mix_HookMusicFinished(musicFinishedCallback);
 }
