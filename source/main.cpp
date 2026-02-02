@@ -11,11 +11,50 @@
 #define FB_W 1920
 #define FB_H 1080
 
+static u64 lastPlaybackActivityTick = 0;
+static bool stayAwakeActive = true;
+
+
+void updateStayAwakeLogic()
+{
+    u64 now = svcGetSystemTick();
+
+    if (playerIsPlaying())
+    {
+        lastPlaybackActivityTick = now;
+
+        if (!stayAwakeActive)
+        {
+            appletSetIdleTimeDetectionExtension(AppletIdleTimeDetectionExtension_ExtendedUnsafe);
+            appletOverrideAutoSleepTimeAndDimmingTime(0,0,0,0);
+            stayAwakeActive = true;
+        }
+    }
+    else
+    {
+        // 5 minutes = 5 * 60 seconds * 19.2MHz ticks
+        const u64 timeout = 5ULL * 60ULL * 19200000ULL;
+
+        if (stayAwakeActive && (now - lastPlaybackActivityTick) > timeout)
+        {
+            // Back to normal system dim/sleep behavior
+            appletSetIdleTimeDetectionExtension((AppletIdleTimeDetectionExtension)0);
+            stayAwakeActive = false;
+        }
+
+    }
+}
+
 
 int main()
 {
+
     // --- Initialize ---
     romfsInit();
+
+    // Prevent screen dimming / sleep while app is running
+
+
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
     TTF_Init();
     IMG_Init(IMG_INIT_PNG);
@@ -78,7 +117,7 @@ int main()
         padUpdate(&pad);
         u64 down = padGetButtonsDown(&pad);
 
-
+        updateStayAwakeLogic();
 
         if (down & HidNpadButton_StickLLeft)
             playerSetPan(playerGetPan() - 0.1f);
