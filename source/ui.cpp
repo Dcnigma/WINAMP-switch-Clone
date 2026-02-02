@@ -33,6 +33,67 @@ static const float PEAK_FALL_SPEED = 2.0f;        // pixels per frame
 
 extern float g_fftInput[FFT_SIZE];
 
+static void drawPanSlider(SDL_Renderer* renderer,
+                          SDL_Texture* texPan,
+                          SDL_Rect barRect)
+{
+    if (!renderer || !texPan) return;
+
+    // --- 1. Get pan (-1.0 → +1.0) ---
+    float pan = playerGetPan();
+    if (pan < -1.0f) pan = -1.0f;
+    if (pan >  1.0f) pan =  1.0f;
+
+    // Convert to 0.0 → 1.0
+    float pan01 = (pan + 1.0f) * 0.5f;
+
+    // --- 2. Convert to sprite index (0–27) ---
+    const int totalLevels = 28;
+    int level = (int)(pan01 * (totalLevels - 1) + 0.5f);
+
+    const int colorStartX = 74;   // start of color strip
+    const int colorStartY = 37;
+    const int frameW = 27;        // 1718 / 28
+    const int frameH = 150;
+    const int frameGap = 33;       // set >0 if there is spacing
+
+    if (level < 0) level = 0;
+    if (level >= totalLevels) level = totalLevels - 1;
+
+    int srcX = colorStartX + level * (frameW + frameGap);
+
+    SDL_Rect srcBar = { srcX, colorStartY, frameW, frameH };
+
+    // Center bar graphic inside placeholder
+    SDL_Rect dstBar = {
+        barRect.x + (barRect.w - frameW) / 2,
+        barRect.y + (barRect.h - frameH) / 2,
+        frameW,
+        frameH
+    };
+
+    SDL_RenderCopy(renderer, texPan, &srcBar, &dstBar);
+
+    // --- 3. Draw slider knob (VERTICAL movement) ---
+    SDL_Rect srcKnob = { 4, 64, 37, 50 };
+
+    int knobTravel = barRect.h - srcKnob.h;
+
+    // 0.0 (LEFT)  -> TOP
+    // 0.5 (CENTER)-> MIDDLE
+    // 1.0 (RIGHT) -> BOTTOM
+    int knobOffset = (int)(pan01 * knobTravel);
+
+    SDL_Rect dstKnob = {
+        barRect.x + (barRect.w - srcKnob.w) / 2,
+        barRect.y + knobOffset,
+        srcKnob.w,
+        srcKnob.h
+    };
+
+    SDL_RenderCopy(renderer, texPan, &srcKnob, &dstKnob);
+
+}
 
 static void drawVolumeBar(SDL_Renderer* renderer,
                           SDL_Texture* volumeTex,
@@ -440,7 +501,7 @@ void formatTime(int seconds, char* out, size_t size)
 
 
 // --- Render full UI ---
-void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, SDL_Texture* texVolume, const char* songText)
+void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, SDL_Texture* texVolume, SDL_Texture* texPan,const char* songText)
 {
   if (!fftInitialized)
   {
@@ -521,7 +582,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawVolumeBar(renderer, texVolume, volumeBarRect);
 
 
-    SDL_Rect panSlider     = {1551, 698,40,145};
+    SDL_Rect panSlider     = {1552, 698,40,145};
 
     SDL_Rect addPlaylist   = {70,  42,100,100};
     SDL_Rect rmPlaylist    = {70, 158,100,100};
@@ -569,7 +630,9 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawRect(renderer, eqPreset3, 100,100,100,150);
 
 //    drawRect(renderer, volumeSlider, 150,150,0,150);
-    drawRect(renderer, panSlider, 0,150,150,150);
+//    drawRect(renderer, panSlider, 0,150,150,150);
+
+    drawPanSlider(renderer, texPan, panSlider);
 
     drawRect(renderer, addPlaylist, 150,150,0,150);
     drawRect(renderer, rmPlaylist, 0,150,150,150);

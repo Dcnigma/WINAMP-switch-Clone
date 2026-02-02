@@ -12,7 +12,6 @@
 #define FB_H 1080
 
 
-
 int main()
 {
     // --- Initialize ---
@@ -50,6 +49,10 @@ int main()
     if (!texVolume)
         printf("Failed to load volume.png: %s\n", IMG_GetError());
 
+    SDL_Texture* texPan = IMG_LoadTexture(renderer, "romfs:/skins/BALANCE.png");
+    if (!texVolume)
+        printf("Failed to load volume.png: %s\n", IMG_GetError());
+
     // --- At boot ---
     playlistClear();
     mp3ClearMetadata();
@@ -75,6 +78,13 @@ int main()
         padUpdate(&pad);
         u64 down = padGetButtonsDown(&pad);
 
+
+
+        if (down & HidNpadButton_StickLLeft)
+            playerSetPan(playerGetPan() - 0.1f);
+
+        if (down & HidNpadButton_StickLRight)
+            playerSetPan(playerGetPan() + 0.1f);
 
 
         // ---------------------------
@@ -153,7 +163,7 @@ int main()
         }
 
 
-        uiRender(renderer, font, fontBig, skin, texProgIndicator, texVolume, songText);   // UI background
+        uiRender(renderer, font, fontBig, skin, texProgIndicator, texVolume, texPan, songText);   // UI background
 //        uiRender(renderer, font, smallFont, texProgIndicator, currentTitle);
 
         renderPlaylist(renderer, font);            // Playlist

@@ -3,43 +3,98 @@
 #include "mp3.h"       // for Mp3MetadataEntry
 #include <SDL_mixer.h>
 #include <stdio.h>
-#include <switch.h>    // ✅ needed for u64 and svcGetSystemTick
+#include <switch.h>
 #include <math.h>
 
 #define FFT_SIZE 1024
 
-float g_fftInput[FFT_SIZE] = {0};   // waveform input
-static int fftWritePos = 0;         // rolling write index
+float g_fftInput[FFT_SIZE] = {0};
+static int fftWritePos = 0;
 
 static Mix_Music* currentMusic = nullptr;
 static int currentTrackIndex = -1;
 static bool musicFinished = false;
-static u64 trackStartTick = 0;   // Switch system tick
-static int currentTrackLength = 0; // seconds
+static u64 trackStartTick = 0;
+static int currentTrackLength = 0;
 
+// 🎚 Master controls
+static float g_volume   = 1.0f;   // 0.0 – 1.0
+static float g_pan      = 0.0f;   // -1.0 left … +1.0 right
+static float g_leftMix  = 1.0f;   // calculated output level
+static float g_rightMix = 1.0f;
 
 static void postmixCallback(void* udata, Uint8* stream, int len)
 {
     int16_t* samples = (int16_t*)stream;
     int sampleCount = len / sizeof(int16_t);
 
-    for (int i = 0; i < sampleCount; i += 2) // stereo → take left channel
+    for (int i = 0; i < sampleCount; i += 2)
     {
-        g_fftInput[fftWritePos] = samples[i] / 32768.0f; // -1..1 float
+        float left  = samples[i]     / 32768.0f;
+        float right = samples[i + 1] / 32768.0f;
+
+        // Apply volume & pan
+        left  *= g_leftMix;
+        right *= g_rightMix;
+
+        // Clamp
+        if (left  > 1.0f) left  = 1.0f;
+        if (left  < -1.0f) left  = -1.0f;
+        if (right > 1.0f) right = 1.0f;
+        if (right < -1.0f) right = -1.0f;
+
+        samples[i]     = (int16_t)(left  * 32767);
+        samples[i + 1] = (int16_t)(right * 32767);
+
+        g_fftInput[fftWritePos] = left;
         fftWritePos = (fftWritePos + 1) % FFT_SIZE;
     }
 }
 
+void playerApplyVolumePan()
+{
+    float left  = g_volume;
+    float right = g_volume;
+
+    if (g_pan < 0.0f)          // leaning LEFT
+        right *= (1.0f + g_pan);
+    else if (g_pan > 0.0f)     // leaning RIGHT
+        left  *= (1.0f - g_pan);
+
+    if (left  < 0.0f) left  = 0.0f;
+    if (right < 0.0f) right = 0.0f;
+
+    g_leftMix  = left;
+    g_rightMix = right;
+
+    // Base volume still controlled by SDL_mixer
+    Mix_VolumeMusic((int)(g_volume * MIX_MAX_VOLUME));
+}
 
 
-static float g_volume = 1.0f; // 0.0 - 1.0
+
+void playerSetPan(float pan)
+{
+    if (pan < -1.0f) pan = -1.0f;
+    if (pan >  1.0f) pan =  1.0f;
+    g_pan = pan;
+
+    playerApplyVolumePan();   // update real audio output
+}
+
+
+
+float playerGetPan()
+{
+    return g_pan;
+}
 
 void playerSetVolume(float v)
 {
     if (v < 0.0f) v = 0.0f;
     if (v > 1.0f) v = 1.0f;
     g_volume = v;
-
+    playerApplyVolumePan();
     Mix_VolumeMusic((int)(v * MIX_MAX_VOLUME));
 }
 
@@ -102,7 +157,7 @@ void playerPlay(int index)
     currentTrackIndex = index;
     musicFinished = false;
 
-    trackStartTick = svcGetSystemTick(); // ✅ start time
+    trackStartTick = svcGetSystemTick();
 
     const Mp3MetadataEntry* md = mp3GetTrackMetadata(index);
     currentTrackLength = md ? md->durationSeconds : 0;
