@@ -9,6 +9,9 @@ void playlistScrollDown();
 void playlistClear();
 void playlistSetCurrentIndex(int index);
 
+int playlistGetScroll();        // current scroll offset
+int playlistGetMaxVisible();    // how many songs fit on screen
+
 
 // Draw playlist UI
 void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font);

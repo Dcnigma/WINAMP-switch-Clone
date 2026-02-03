@@ -11,6 +11,18 @@ static std::vector<std::string> playlist;
 int playlistScroll = 0;            // top visible item
 static int currentIndex = 0;       // selected track (for playback highlight)
 
+int playlistGetScroll()
+{
+    return playlistScroll;
+}
+
+// how many rows your UI shows at once
+int playlistGetMaxVisible()
+{
+    return 10; // <-- CHANGE if your UI shows a different amount
+}
+
+
 static void formatTime(int seconds, char* out, size_t outSize)
 {
     int m = seconds / 60;
@@ -36,6 +48,8 @@ void playlistAdd(const char* path)
     if (!path) return;
     playlist.push_back(path);
 }
+
+
 
 // Get total tracks
 int playlistGetCount()

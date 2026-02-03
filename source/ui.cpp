@@ -181,7 +181,7 @@ static void drawProgressBar(SDL_Renderer* renderer,
 
 // Draw Mono / Stereo indicators
 // Call this from uiRender()
-static void drawMonoStereo(SDL_Renderer* renderer, TTF_Font* font, const Mp3MetadataEntry* md, SDL_Rect monoRect, SDL_Rect stereoRect)
+static void drawMonoStereo(SDL_Renderer* renderer, TTF_Font* font, const Mp3MetadataEntry* md, SDL_Rect monoRect,  SDL_Rect stereoRect)
 {
     if (!renderer || !font) return;
 
@@ -499,9 +499,52 @@ void formatTime(int seconds, char* out, size_t size)
     snprintf(out, size, "%02d:%02d", m, s);
 }
 
+static void drawPlaylistSlider(SDL_Renderer* renderer,
+                               SDL_Texture* knobTex)
+{
+    if (!renderer || !knobTex) return;
+
+    int totalItems = playlistGetCount();
+    int scroll     = playlistGetScroll();
+    int visible    = playlistGetMaxVisible();
+
+    if (totalItems <= 0) return;
+
+    // --- Slider track area (where knob can move) ---
+    const int trackX = 208;
+    const int trackY = 1020;
+    const int trackW = 326;
+    const int trackH = 30;
+
+    // --- Knob size ---
+    const int knobW = 103;
+    const int knobH = 30;
+
+    // If everything fits on screen, knob stays RIGHT
+    float t = 1.0f;
+
+    int maxScroll = totalItems - visible;
+    if (maxScroll > 0)
+    {
+        t = 1.0f - ((float)scroll / (float)maxScroll);
+    }
+
+    // Clamp
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+
+    int travel = trackW - knobW;
+    int knobX  = trackX + (int)(t * travel);
+    int knobY  = trackY;
+
+    SDL_Rect dstKnob = { knobX, knobY, knobW, knobH };
+
+    SDL_RenderCopy(renderer, knobTex, NULL, &dstKnob);
+}
+
 
 // --- Render full UI ---
-void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, SDL_Texture* texVolume, SDL_Texture* texPan,const char* songText)
+void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, SDL_Texture* texVolume, SDL_Texture* texPan,  SDL_Texture* texPlaylistKnob, const char* songText)
 {
   if (!fftInitialized)
   {
@@ -557,6 +600,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     const Mp3MetadataEntry* md = mp3GetTrackMetadata(playerGetCurrentTrackIndex());
     drawMonoStereo(renderer, font, md, monoRect, stereoRect);
 
+    drawPlaylistSlider(renderer, texPlaylistKnob);
 
 
     SDL_Rect eqBand1       = {720,   91,346, 33};

@@ -92,6 +92,10 @@ int main()
     if (!texVolume)
         printf("Failed to load volume.png: %s\n", IMG_GetError());
 
+    SDL_Texture* texPlaylistKnob = IMG_LoadTexture(renderer, "romfs:/skins/PlaylistKnob.png");
+    if (!texPlaylistKnob)
+        printf("Failed to load volume.png: %s\n", IMG_GetError());
+
     // --- At boot ---
     playlistClear();
     mp3ClearMetadata();
@@ -202,7 +206,7 @@ int main()
         }
 
 
-        uiRender(renderer, font, fontBig, skin, texProgIndicator, texVolume, texPan, songText);   // UI background
+        uiRender(renderer, font, fontBig, skin, texProgIndicator, texVolume, texPan, texPlaylistKnob, songText);   // UI background
 //        uiRender(renderer, font, smallFont, texProgIndicator, currentTitle);
 
         renderPlaylist(renderer, font);            // Playlist
