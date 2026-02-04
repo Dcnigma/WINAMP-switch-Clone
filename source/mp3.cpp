@@ -86,74 +86,153 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
 
 // --- Read bitrate & sample rate from first MPEG frame ---
 //static void readMp3BitrateAndRate(const char* path, int& outBitrateKbps, int& outSampleRateKHz)
-static void readMp3BitrateAndRate(const char* path, int& outBitrateKbps, int& outSampleRateKHz, int& outChannels)
-
+static void readMp3BitrateAndRate(const char* path,
+                                  int& outBitrateKbps,
+                                  int& outSampleRateKHz,
+                                  int& outChannels)
 {
-    outBitrateKbps = 0;  // 0 = unknown / not playing
+    outBitrateKbps = 0;
     outSampleRateKHz = 0;
+    outChannels = 0;
 
     FILE* f = fopen(path, "rb");
     if (!f) return;
 
-    unsigned char buf[10];
-    if (fread(buf, 1, 10, f) != 10) { fclose(f); return; }
+    // Get file size (prevents bad seeks → crashes)
+    fseek(f, 0, SEEK_END);
+    long fileSize = ftell(f);
+    rewind(f);
 
-    // skip ID3 tag if present
-    if (buf[0]=='I' && buf[1]=='D' && buf[2]=='3') {
-        int tagSize = (buf[6]<<21)|(buf[7]<<14)|(buf[8]<<7)|buf[9];
-        fseek(f, tagSize, SEEK_CUR);
-        fread(buf, 1, 4, f);
+    unsigned char header[10];
+
+    // Skip ID3v2 safely
+    if (fread(header, 1, 10, f) == 10 && memcmp(header, "ID3", 3) == 0)
+    {
+        int tagSize = (header[6]<<21)|(header[7]<<14)|(header[8]<<7)|header[9];
+        long skipTo = 10 + tagSize;
+        if (skipTo < fileSize)
+            fseek(f, skipTo, SEEK_SET);
+        else {
+            fclose(f);
+            return;
+        }
+    }
+    else
+    {
+        rewind(f);
     }
 
-    if ((buf[0]==0xFF) && ((buf[1]&0xE0)==0xE0))
+    unsigned char b[4];
+
+    // Scan file for a real MPEG frame (max first 256 KB)
+    long scanLimit = fileSize < 262144 ? fileSize : 262144;
+
+    while (ftell(f) < scanLimit && fread(b, 1, 4, f) == 4)
     {
-        int versionIndex = (buf[1] >> 3) & 0x03;
-        int layerIndex   = (buf[1] >> 1) & 0x03;
-        int brIndex      = (buf[2] >> 4) & 0x0F;
-        int srIndex      = (buf[2] >> 2) & 0x03;
+        if (b[0] == 0xFF && (b[1] & 0xE0) == 0xE0)
+        {
+            int versionIndex = (b[1] >> 3) & 0x03;
+            int layerIndex   = (b[1] >> 1) & 0x03;
+            int brIndex      = (b[2] >> 4) & 0x0F;
+            int srIndex      = (b[2] >> 2) & 0x03;
 
-        static const int bitrates[2][3][16] = {
-            { // MPEG-2
-                {0,32,48,56,64,80,96,112,128,144,160,176,192,224,256,0}, // Layer III
-                {0,32,48,56,64,80,96,112,128,144,160,176,192,224,256,0}, // Layer II
-                {0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0}   // Layer I
-            },
-            { // MPEG-1
-                {0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0},  // Layer III
-                {0,32,48,56,64,80,96,112,128,160,192,224,256,320,0},      // Layer II
-                {0,32,64,80,96,112,128,160,192,224,256,320,384,0,0,0}     // Layer I
+            if (versionIndex == 1 || layerIndex == 0 || srIndex == 3 || brIndex == 0 || brIndex == 15)
+            {
+                fseek(f, -3, SEEK_CUR);
+                continue;
             }
-        };
 
-        static const int sampleRates[2][4] = {
-            {22050,24000,16000,0}, // MPEG-2
-            {44100,48000,32000,0}  // MPEG-1
-        };
+            int version = (versionIndex == 3) ? 1 : 0; // MPEG1 vs MPEG2
+            int layer   = 3 - layerIndex;
 
-        int version = (versionIndex==3)?1:0; // 1=MPEG1, 0=MPEG2
-        int layer   = 3 - layerIndex;        // Layer I=3, II=2, III=1
+            static const int bitrates[2][3][16] = {
+                { {0,32,48,56,64,80,96,112,128,144,160,176,192,224,256,0},
+                  {0,32,48,56,64,80,96,112,128,144,160,176,192,224,256,0},
+                  {0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0} },
+                { {0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0},
+                  {0,32,48,56,64,80,96,112,128,160,192,224,256,320,0},
+                  {0,32,64,80,96,112,128,160,192,224,256,320,384,0,0,0} }
+            };
 
-        outBitrateKbps   = bitrates[version][layer-1][brIndex];
-        outSampleRateKHz = sampleRates[version][srIndex]/1000;
+            static const int sampleRates[2][4] = {
+                {22050,24000,16000,0},
+                {44100,48000,32000,0}
+            };
 
-        outChannels = ((buf[3] & 0x01) == 0) ? 2 : 1;
+            outBitrateKbps   = bitrates[version][layer-1][brIndex];
+            outSampleRateKHz = sampleRates[version][srIndex] / 1000;
+            outChannels      = ((b[3] & 0xC0) == 0xC0) ? 1 : 2;
 
+            break;
+        }
+
+        fseek(f, -3, SEEK_CUR);
     }
 
     fclose(f);
 }
 
+
 // --- Get MP3 duration using bitrate (works for CBR, approximate for VBR) ---
 static int getMp3DurationSeconds(const char* path, int bitrateKbps)
 {
-    if (bitrateKbps <= 0) return 0;
+    FILE* f = fopen(path, "rb");
+    if (!f) return 0;
 
+    unsigned char header[10];
+    if (fread(header, 1, 10, f) != 10) { fclose(f); return 0; }
+
+    if (memcmp(header, "ID3", 3) == 0) {
+        int tagSize = (header[6]<<21)|(header[7]<<14)|(header[8]<<7)|header[9];
+        fseek(f, 10 + tagSize, SEEK_SET);
+    } else {
+        fseek(f, 0, SEEK_SET);
+    }
+
+    unsigned char frame[4];
+    if (fread(frame, 1, 4, f) != 4) { fclose(f); return 0; }
+
+    int versionIndex = (frame[1] >> 3) & 0x03;
+    int srIndex      = (frame[2] >> 2) & 0x03;
+
+    static const int sampleRates[2][4] = {
+        {22050,24000,16000,0},
+        {44100,48000,32000,0}
+    };
+
+    int version = (versionIndex == 3) ? 1 : 0;
+    int sampleRate = sampleRates[version][srIndex];
+
+    fseek(f, 32, SEEK_CUR); // jump to possible Xing header area
+
+    char tag[4];
+    fread(tag, 1, 4, f);
+
+    if (memcmp(tag, "Xing", 4) == 0 || memcmp(tag, "Info", 4) == 0)
+    {
+        unsigned char flags[4];
+        fread(flags, 1, 4, f);
+
+        if (flags[3] & 0x01) // frames field present
+        {
+            unsigned char frames[4];
+            fread(frames, 1, 4, f);
+            int totalFrames = (frames[0]<<24)|(frames[1]<<16)|(frames[2]<<8)|frames[3];
+
+            fclose(f);
+            return (int)((double)totalFrames * 1152 / sampleRate);
+        }
+    }
+
+    fclose(f);
+
+    // fallback to CBR estimate
+    if (bitrateKbps <= 0) return 0;
     struct stat st;
     if (stat(path, &st) != 0) return 0;
-
-    double seconds = (double)st.st_size * 8 / (bitrateKbps * 1000);
-    return (int)seconds;
+    return (int)((double)st.st_size * 8 / (bitrateKbps * 1000));
 }
+
 
 /* ---------- Public API ---------- */
 
