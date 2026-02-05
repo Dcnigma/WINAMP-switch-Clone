@@ -18,24 +18,84 @@ static unsigned int syncsafeToInt(unsigned char* b)
 // Read a text frame from ID3v2
 static void readTextFrame(FILE* f, unsigned int size, char* out, size_t outSize)
 {
-    if (size < 1) return;
+    if (size < 1 || outSize == 0) return;
 
     unsigned char encoding;
     fread(&encoding, 1, 1, f);
     size--;
 
-    // Only support ISO-8859-1 and UTF-8 safely
-    if (encoding == 0 || encoding == 3)
+    if (encoding == 0) // ISO-8859-1 / ASCII
     {
         size_t toRead = (size < outSize - 1) ? size : outSize - 1;
         fread(out, 1, toRead, f);
         out[toRead] = 0;
+
+        if (size > toRead)
+            fseek(f, size - toRead, SEEK_CUR);
+    }
+    else if (encoding == 3) // UTF-8
+    {
+        size_t toRead = (size < outSize - 1) ? size : outSize - 1;
+        fread(out, 1, toRead, f);
+        out[toRead] = 0;
+
+        if (size > toRead)
+            fseek(f, size - toRead, SEEK_CUR);
+    }
+    else if (encoding == 1 || encoding == 2) // UTF-16 (with or without BOM)
+    {
+        // Read full UTF-16 string into temp buffer
+        unsigned char buf[512];
+        size_t toRead = (size < sizeof(buf)) ? size : sizeof(buf);
+        fread(buf, 1, toRead, f);
+
+        bool bigEndian = (encoding == 2);
+
+        // Check BOM for encoding==1
+        size_t offset = 0;
+        if (encoding == 1 && toRead >= 2)
+        {
+            if (buf[0] == 0xFF && buf[1] == 0xFE) { bigEndian = false; offset = 2; }
+            else if (buf[0] == 0xFE && buf[1] == 0xFF) { bigEndian = true; offset = 2; }
+        }
+
+        // Convert UTF-16 → UTF-8 (basic BMP only, enough for tags)
+        size_t outPos = 0;
+        for (size_t i = offset; i + 1 < toRead && outPos < outSize - 1; i += 2)
+        {
+            unsigned short ch = bigEndian
+                ? (buf[i] << 8) | buf[i+1]
+                : (buf[i+1] << 8) | buf[i];
+
+            if (ch == 0) break; // string end
+
+            if (ch < 0x80)
+            {
+                out[outPos++] = (char)ch;
+            }
+            else if (ch < 0x800 && outPos < outSize - 2)
+            {
+                out[outPos++] = 0xC0 | (ch >> 6);
+                out[outPos++] = 0x80 | (ch & 0x3F);
+            }
+            else if (outPos < outSize - 3)
+            {
+                out[outPos++] = 0xE0 | (ch >> 12);
+                out[outPos++] = 0x80 | ((ch >> 6) & 0x3F);
+                out[outPos++] = 0x80 | (ch & 0x3F);
+            }
+        }
+
+        out[outPos] = 0;
+
+        if (size > toRead)
+            fseek(f, size - toRead, SEEK_CUR);
     }
     else
     {
-        // Skip UTF-16 etc to avoid garbage
-        strncpy(out, "Unknown", outSize);
+        // Unknown encoding → skip
         fseek(f, size, SEEK_CUR);
+        out[0] = 0;
     }
 }
 
@@ -220,68 +280,6 @@ static int getMp3DurationSeconds(const char* path, int bitrateKbps)
 
     return 0; // VBR handled earlier via Xing/VBRI
 }
-//
-//
-// // --- Get MP3 duration using bitrate (works for CBR, approximate for VBR) ---
-// static int getMp3DurationSeconds(const char* path, int bitrateKbps)
-// {
-//     FILE* f = fopen(path, "rb");
-//     if (!f) return 0;
-//
-//     unsigned char header[10];
-//     if (fread(header, 1, 10, f) != 10) { fclose(f); return 0; }
-//
-//     if (memcmp(header, "ID3", 3) == 0) {
-//         int tagSize = (header[6]<<21)|(header[7]<<14)|(header[8]<<7)|header[9];
-//         fseek(f, 10 + tagSize, SEEK_SET);
-//     } else {
-//         fseek(f, 0, SEEK_SET);
-//     }
-//
-//     unsigned char frame[4];
-//     if (fread(frame, 1, 4, f) != 4) { fclose(f); return 0; }
-//
-//     int versionIndex = (frame[1] >> 3) & 0x03;
-//     int srIndex      = (frame[2] >> 2) & 0x03;
-//
-//     static const int sampleRates[2][4] = {
-//         {22050,24000,16000,0},
-//         {44100,48000,32000,0}
-//     };
-//
-//     int version = (versionIndex == 3) ? 1 : 0;
-//     int sampleRate = sampleRates[version][srIndex];
-//
-//     fseek(f, 32, SEEK_CUR); // jump to possible Xing header area
-//
-//     char tag[4];
-//     fread(tag, 1, 4, f);
-//
-//     if (memcmp(tag, "Xing", 4) == 0 || memcmp(tag, "Info", 4) == 0)
-//     {
-//         unsigned char flags[4];
-//         fread(flags, 1, 4, f);
-//
-//         if (flags[3] & 0x01) // frames field present
-//         {
-//             unsigned char frames[4];
-//             fread(frames, 1, 4, f);
-//             int totalFrames = (frames[0]<<24)|(frames[1]<<16)|(frames[2]<<8)|frames[3];
-//
-//             fclose(f);
-//             return (int)((double)totalFrames * 1152 / sampleRate);
-//         }
-//     }
-//
-//     fclose(f);
-//
-//     // fallback to CBR estimate
-//     if (bitrateKbps <= 0) return 0;
-//     struct stat st;
-//     if (stat(path, &st) != 0) return 0;
-//     return (int)((double)st.st_size * 8 / (bitrateKbps * 1000));
-// }
-
 
 /* ---------- Public API ---------- */
 
