@@ -128,6 +128,8 @@ void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font)
         if (!trackPath) continue;
 
         const Mp3MetadataEntry* md = mp3GetTrackMetadata(idx);
+        if (!md) continue;
+
 
         char line[256];
         if (md && (md->artist[0] || md->title[0]))
