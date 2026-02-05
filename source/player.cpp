@@ -198,6 +198,37 @@ void playerUpdate()
     }
 }
 
+static void readID3v1Fallback(const char* path, Mp3MetadataEntry& entry)
+{
+    if (entry.artist[0] && entry.title[0]) return; // already have data
+
+    FILE* f = fopen(path, "rb");
+    if (!f) return;
+
+    fseek(f, -128, SEEK_END);
+
+    char tag[128];
+    if (fread(tag, 1, 128, f) != 128) { fclose(f); return; }
+
+    if (memcmp(tag, "TAG", 3) == 0)
+    {
+        if (entry.title[0] == 0)
+        {
+            memcpy(entry.title, tag + 3, 30);
+            entry.title[30] = 0;
+        }
+
+        if (entry.artist[0] == 0)
+        {
+            memcpy(entry.artist, tag + 33, 30);
+            entry.artist[30] = 0;
+        }
+    }
+
+    fclose(f);
+}
+
+
 /* ---------- Status helpers ---------- */
 bool playerIsPlaying()
 {

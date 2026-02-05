@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include "player.h"
 
 static std::vector<Mp3MetadataEntry> playlistMetadata;
 
@@ -99,6 +100,35 @@ static void readTextFrame(FILE* f, unsigned int size, char* out, size_t outSize)
     }
 }
 
+static void readID3v1Fallback(const char* path, Mp3MetadataEntry& entry)
+{
+    if (entry.artist[0] && entry.title[0]) return;
+
+    FILE* f = fopen(path, "rb");
+    if (!f) return;
+
+    if (fseek(f, -128, SEEK_END) != 0) { fclose(f); return; }
+
+    char tag[128];
+    if (fread(tag, 1, 128, f) != 128) { fclose(f); return; }
+
+    if (memcmp(tag, "TAG", 3) == 0)
+    {
+        if (entry.title[0] == 0)
+        {
+            memcpy(entry.title, tag + 3, 30);
+            entry.title[30] = 0;
+        }
+
+        if (entry.artist[0] == 0)
+        {
+            memcpy(entry.artist, tag + 33, 30);
+            entry.artist[30] = 0;
+        }
+    }
+
+    fclose(f);
+}
 
 // Read ID3v2 metadata from MP3
 static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
@@ -142,7 +172,10 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
 
         if (strcmp(frameId,"TIT2")==0)
             readTextFrame(f, frameSize, entry.title, sizeof(entry.title));
-        else if (strcmp(frameId,"TPE1")==0)
+        else if (strcmp(frameId,"TPE1")==0) // Lead artist
+            readTextFrame(f, frameSize, entry.artist, sizeof(entry.artist));
+
+        else if (strcmp(frameId,"TPE2")==0 && entry.artist[0] == 0) // Fallback: Album artist
             readTextFrame(f, frameSize, entry.artist, sizeof(entry.artist));
         else
             fseek(f, frameSize, SEEK_CUR);
@@ -198,7 +231,7 @@ static void readMp3BitrateAndRate(const char* path,
         return;
     }
 
-    int versionIndex = (h[1] >> 3) & 0x03;
+//    int versionIndex = (h[1] >> 3) & 0x03;
     int srIndex      = (h[2] >> 2) & 0x03;
 
     static const int sampleRates[4] = {44100,48000,32000,0};
@@ -296,6 +329,7 @@ bool mp3AddToPlaylist(const char* path)
 
     Mp3MetadataEntry entry;
     readMp3Metadata(path, entry);
+    readID3v1Fallback(path, entry);
 
     // read bitrate & sample rate (zero if unknown)
     readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz, entry.channels);
@@ -320,6 +354,7 @@ void mp3ReloadAllMetadata()
 
         Mp3MetadataEntry entry;
         readMp3Metadata(path, entry);
+        readID3v1Fallback(path, entry);
         readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz, entry.channels);
 
         entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
