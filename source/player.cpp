@@ -140,22 +140,11 @@ void playerPlay(int index)
     if (index < 0 || index >= playlistGetCount())
         return;
 
+    playerStop();  // now SAFE
+
     const char* path = playlistGetTrack(index);
     if (!path) return;
 
-    // STOP AUDIO THREAD FIRST
-    Mix_HaltMusic();
-    Mix_HookMusicFinished(NULL);
-    SDL_Delay(20);
-
-    // 🧹 FREE OLD TRACK SAFELY
-    if (currentMusic)
-    {
-        Mix_FreeMusic(currentMusic);
-        currentMusic = NULL;
-    }
-
-    // 🎵 LOAD NEW TRACK
     Mix_Music* newMusic = Mix_LoadMUS(path);
     if (!newMusic)
     {
@@ -165,7 +154,6 @@ void playerPlay(int index)
 
     currentMusic = newMusic;
 
-    // ▶️ START PLAYBACK
     if (Mix_PlayMusic(currentMusic, 1) == -1)
     {
         printf("Mix_PlayMusic failed: %s\n", Mix_GetError());
@@ -174,7 +162,6 @@ void playerPlay(int index)
         return;
     }
 
-    // Restore callback
     Mix_HookMusicFinished(musicFinishedCallback);
 
     currentTrackIndex = index;
@@ -186,15 +173,16 @@ void playerPlay(int index)
 }
 
 
+
 /* ---------- Stop playback ---------- */
 void playerStop()
 {
-    // Stop playback and detach callback first
     Mix_HookMusicFinished(NULL);
-    Mix_HaltMusic();
 
-    // Give decoder thread time to exit cleanly
-    SDL_Delay(20);
+    //  LOCK AUDIO THREAD
+    SDL_LockAudio();
+
+    Mix_HaltMusic();
 
     if (currentMusic)
     {
@@ -202,11 +190,14 @@ void playerStop()
         currentMusic = nullptr;
     }
 
+    SDL_UnlockAudio();
+
     currentTrackIndex = -1;
     currentTrackLength = 0;
     trackStartTick = 0;
     musicFinished = false;
 }
+
 
 // void playerShutdown()
 // {

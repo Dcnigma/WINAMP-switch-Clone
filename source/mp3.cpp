@@ -409,7 +409,16 @@ bool mp3AddToPlaylist(const char* path)
 
 
     // duration using actual bitrate (works for CBR, approximate for VBR)
+
+    // after readMp3BitrateAndRate(...)
     entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
+
+    // 🔍 If duration looks suspicious, force accurate scan
+    if (entry.durationSeconds < 5 || entry.durationSeconds > 3600)
+    {
+        entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
+    }
+
 
     playlistMetadata.push_back(entry);
     return true;
@@ -429,7 +438,14 @@ void mp3ReloadAllMetadata()
         readMp3Metadata(path, entry);
         readID3v1Fallback(path, entry);
         readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz, entry.channels);
+        // after readMp3BitrateAndRate(...)
         entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
+
+        // 🔍 If duration looks suspicious, force accurate scan
+        if (entry.durationSeconds < 5 || entry.durationSeconds > 3600)
+        {
+            entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
+        }
 
 
         playlistMetadata.push_back(entry);
@@ -457,7 +473,15 @@ bool mp3Load(const char* path)
     Mp3MetadataEntry entry;
     readMp3Metadata(path, entry);
     readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz, entry.channels);
+
+    // after readMp3BitrateAndRate(...)
     entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
+
+    // 🔍 If duration looks suspicious, force accurate scan
+    if (entry.durationSeconds < 5 || entry.durationSeconds > 3600)
+    {
+        entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
+    }
 
 
     playlistAdd(path);

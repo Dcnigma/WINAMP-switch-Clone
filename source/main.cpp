@@ -89,7 +89,7 @@ int main()
         printf("Failed to load volume.png: %s\n", IMG_GetError());
 
     SDL_Texture* texPan = IMG_LoadTexture(renderer, "romfs:/skins/BALANCE.png");
-    if (!texVolume)
+    if (!texPan)
         printf("Failed to load volume.png: %s\n", IMG_GetError());
 
     SDL_Texture* texPlaylistKnob = IMG_LoadTexture(renderer, "romfs:/skins/PlaylistKnob.png");
@@ -217,6 +217,8 @@ int main()
     }
 
     // --- Cleanup ---
+    playerStop();
+    SDL_Delay(50);
     if (font) TTF_CloseFont(font);
     if (skin) SDL_DestroyTexture(skin);
     if (fontBig) TTF_CloseFont(fontBig);
