@@ -140,29 +140,48 @@ void playerPlay(int index)
     if (index < 0 || index >= playlistGetCount())
         return;
 
-    playerStop();  // now SAFE
-
     const char* path = playlistGetTrack(index);
     if (!path) return;
 
+    // lock audio so mixer thread can't decode while we switch
+    SDL_LockAudio();
+
+    // stop previous
+    Mix_HookMusicFinished(NULL);
+    Mix_HaltMusic();
+
+    if (currentMusic)
+    {
+        Mix_FreeMusic(currentMusic);
+        currentMusic = nullptr;
+    }
+
+    // load new music
     Mix_Music* newMusic = Mix_LoadMUS(path);
     if (!newMusic)
     {
         printf("Mix_LoadMUS failed: %s\n", Mix_GetError());
+        SDL_UnlockAudio();
         return;
     }
 
     currentMusic = newMusic;
 
+    // start playback
     if (Mix_PlayMusic(currentMusic, 1) == -1)
     {
         printf("Mix_PlayMusic failed: %s\n", Mix_GetError());
         Mix_FreeMusic(currentMusic);
-        currentMusic = NULL;
+        currentMusic = nullptr;
+        SDL_UnlockAudio();
         return;
     }
 
+    // restore callback
     Mix_HookMusicFinished(musicFinishedCallback);
+
+    // unlock audio so decoding can proceed
+    SDL_UnlockAudio();
 
     currentTrackIndex = index;
     musicFinished = false;
@@ -177,26 +196,25 @@ void playerPlay(int index)
 /* ---------- Stop playback ---------- */
 void playerStop()
 {
-    Mix_HookMusicFinished(NULL);
-
-    //  LOCK AUDIO THREAD
     SDL_LockAudio();
 
+    Mix_HookMusicFinished(NULL);
     Mix_HaltMusic();
 
     if (currentMusic)
     {
         Mix_FreeMusic(currentMusic);
-        currentMusic = nullptr;
+        currentMusic = NULL;
     }
-
-    SDL_UnlockAudio();
 
     currentTrackIndex = -1;
     currentTrackLength = 0;
     trackStartTick = 0;
     musicFinished = false;
+
+    SDL_UnlockAudio();
 }
+
 
 
 // void playerShutdown()
