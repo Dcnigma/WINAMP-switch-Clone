@@ -15,6 +15,8 @@ struct Mp3MetadataEntry
     int channels;
     int bitrateKbps;    // NEW: bitrate in kbps
     int sampleRateKHz;  // NEW: sample rate in kHz
+    int id3TagBytes;   // NEW
+
 };
 
 // --- Playlist metadata management ---

@@ -152,6 +152,7 @@ static void readID3v1Fallback(const char* path, Mp3MetadataEntry& entry)
 // Read ID3v2 metadata from MP3
 static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
 {
+    entry.id3TagBytes = 0;
     memset(&entry, 0, sizeof(entry));
 
     FILE* f = fopen(path, "rb");
@@ -164,9 +165,12 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
 
     int version = header[3];   // 2, 3 or 4
     unsigned int tagSize = syncsafeToInt(&header[6]);
+    entry.id3TagBytes = tagSize + 10;//
     long tagEnd = 10 + tagSize;
+    //printf("[ID3] Frame: %s Size: %u\n", frameId, frameSize);
 
-    printf("ID3v2.%d tag detected in %s\n", version, path);
+    debugLog("ID3v2.%d tag detected in %s\n", version, path, entry.id3TagBytes);
+    debugLog("ID3 Total tag bytes: %d\n",  entry.id3TagBytes);
 
     while (ftell(f) < tagEnd)
     {
@@ -185,6 +189,7 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
                 (sizeBytes[0] << 16) | (sizeBytes[1] << 8) | sizeBytes[2];
 
             printf("Frame (v2.2): %s Size: %u\n", frameId, frameSize);
+
 
             if (frameSize == 0) break;
 
@@ -276,10 +281,11 @@ static void readMp3BitrateAndRate(const char* path,
 
     if (!(h[0]==0xFF && (h[1]&0xE0)==0xE0))
     {
+        debugLog("[MP3] %s NO MPEG FRAME FOUND\n", path);
         fclose(f);
         return;
     }
-
+    debugLog("[MP3] %s MPEG header found: %02X %02X %02X %02X\n", path, h[0], h[1], h[2], h[3]);
 //    int versionIndex = (h[1] >> 3) & 0x03;
     int srIndex      = (h[2] >> 2) & 0x03;
 
@@ -288,7 +294,7 @@ static void readMp3BitrateAndRate(const char* path,
     outChannels = ((h[3] & 0xC0) == 0xC0) ? 1 : 2;
 
     long frameStart = ftell(f) - 4;
-
+    debugLog("[MP3] SampleRate=%dkHz Channels=%d\n", outSampleRateKHz, outChannels);
     // Jump into frame to check for Xing/VBRI
     fseek(f, frameStart + 32, SEEK_SET); // typical offset for MPEG1 stereo
     unsigned char tag[4];
@@ -311,8 +317,11 @@ static void readMp3BitrateAndRate(const char* path,
         {
             double duration = (frames * 1152.0) / (outSampleRateKHz * 1000);
             outBitrateKbps = (int)((bytes * 8.0) / duration / 1000.0);
-        }
 
+        }
+        debugLog("[MP3] %s has XING/INFO header\n", path);
+        debugLog("[MP3] frames=%d bytes=%d\n", frames, bytes);
+        debugLog("[MP3] Calculated VBR bitrate=%d kbps\n", outBitrateKbps);
         fclose(f);
         return;
     }
@@ -335,6 +344,9 @@ static void readMp3BitrateAndRate(const char* path,
             double duration = (frames * 1152.0) / (outSampleRateKHz * 1000);
             outBitrateKbps = (int)((bytes * 8.0) / duration / 1000.0);
         }
+        printf("[MP3] %s has VBRI header\n", path);
+        printf("[MP3] frames=%d bytes=%d\n", frames, bytes);
+        printf("[MP3] Calculated VBR bitrate=%d kbps\n", outBitrateKbps);
 
         fclose(f);
         return;
@@ -348,45 +360,102 @@ static void readMp3BitrateAndRate(const char* path,
     static const int brTable[16] = {0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0};
 
     outBitrateKbps = brTable[brIndex];
+    debugLog("[MP3] %s using CBR fallback bitrate=%d kbps\n", path, outBitrateKbps);
 
     fclose(f);
 }
 
-int getMp3DurationSeconds(const char* path, int bitrateKbps)
+int getMp3DurationSeconds(const char* path, int bitrateKbps, int id3TagBytes)
 {
-    // 1) Try MPEG frame + Xing/VBRI estimate
+    struct stat st;
+    if (stat(path, &st) != 0)
+        return 0;
+
+    // FAST PATH — file size + bitrate
+    // FAST PATH — file size + bitrate
+    if (bitrateKbps > 0)
+    {
+        long audioBytes = st.st_size - id3TagBytes;
+        if (audioBytes < 0) audioBytes = st.st_size;
+
+        int fastDuration = (int)((audioBytes * 8.0) / (bitrateKbps * 1000.0));
+
+        debugLog("[MP3] FAST duration (audioBytes=%ld bitrate=%d) = %d sec\n",
+                 audioBytes, bitrateKbps, fastDuration);
+
+        // 🚨 If bitrate came from CBR fallback (not Xing/VBRI),
+        // it might actually be VBR → verify with light mpg123 check
+        if (bitrateKbps <= 160)  // most fake-CBR VBR files start low
+        {
+            debugLog("[MP3] Verifying duration — possible VBR without header\n");
+
+            mpg123_handle* mh = mpg123_new(NULL, NULL);
+            if (mh && mpg123_open(mh, path) == MPG123_OK)
+            {
+                off_t samples = mpg123_length(mh);
+                long rate;
+                int ch, enc;
+                mpg123_getformat(mh, &rate, &ch, &enc);
+
+                if (samples > 0 && rate > 0)
+                {
+                    int realDuration = samples / rate;
+
+                    debugLog("[MP3] mpg123 quick length = %d sec\n", realDuration);
+
+                    // If difference is big → trust mpg123 instead
+                    if (abs(realDuration - fastDuration) > 5)
+                    {
+                        debugLog("[MP3] FAST duration rejected (VBR detected)\n");
+                        mpg123_close(mh);
+                        mpg123_delete(mh);
+                        return realDuration;
+                    }
+                }
+
+                mpg123_close(mh);
+                mpg123_delete(mh);
+            }
+        }
+
+        if (fastDuration > 10 && fastDuration < 7200)
+            return fastDuration;
+
+        debugLog("[MP3] FAST duration rejected, using full scan\n");
+    }
+
+
+
+    // SLOW PATH — only for broken/VBR-without-header files
     mpg123_handle* mh = mpg123_new(NULL, NULL);
     if (!mh) return 0;
 
-    if (mpg123_open(mh, path) == MPG123_OK)
+    if (mpg123_open(mh, path) != MPG123_OK)
     {
-        // If mpg123 can scan file quickly, this is most accurate
-        mpg123_scan(mh);
-
-        off_t samples = mpg123_length(mh);
-        long rate;
-        int channels, enc;
-        mpg123_getformat(mh, &rate, &channels, &enc);
-
-        if (samples > 0 && rate > 0)
-        {
-            mpg123_close(mh);
-            mpg123_delete(mh);
-            return (int)(samples / rate);
-        }
-        mpg123_close(mh);
+        mpg123_delete(mh);
+        return 0;
     }
+    printf("[MP3] Using mpg123 FULL SCAN for duration (slow path)\n");
+    mpg123_scan(mh);  // heavy but rare now
 
+
+    off_t samples = mpg123_length(mh);
+    long rate;
+    int ch, enc;
+    mpg123_getformat(mh, &rate, &ch, &enc);
+
+    int finalDuration = 0;
+    if (samples > 0 && rate > 0)
+        finalDuration = samples / rate;
+
+    debugLog("[MP3] mpg123 duration = %d sec (samples=%lld rate=%ld)\n",
+             finalDuration, samples, rate);
+
+    mpg123_close(mh);
     mpg123_delete(mh);
 
-    // 2) Fallback: safe file-size/bitrate method ANYWAY
-    struct stat st;
-    if (bitrateKbps > 0 && stat(path, &st) == 0)
-    {
-        return (int)((st.st_size * 8.0) / (bitrateKbps * 1000.0));
-    }
+    return finalDuration;
 
-    return 0;
 }
 
 
@@ -414,12 +483,14 @@ bool mp3AddToPlaylist(const char* path)
     // duration using actual bitrate (works for CBR, approximate for VBR)
 
     // after readMp3BitrateAndRate(...)
-    entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
+    entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps, entry.id3TagBytes);
 
     // 🔍 If duration looks suspicious, force accurate scan
     if (entry.durationSeconds < 5 || entry.durationSeconds > 3600)
     {
-        entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
+//        entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
+        entry.durationSeconds = getMp3DurationSeconds(path, 0, entry.id3TagBytes);
+
     }
 
 
@@ -442,12 +513,14 @@ void mp3ReloadAllMetadata()
         readID3v1Fallback(path, entry);
         readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz, entry.channels);
         // after readMp3BitrateAndRate(...)
-        entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
-
+        //entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
+        entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps, entry.id3TagBytes);
         // 🔍 If duration looks suspicious, force accurate scan
         if (entry.durationSeconds < 5 || entry.durationSeconds > 3600)
         {
-            entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
+//            entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
+            entry.durationSeconds = getMp3DurationSeconds(path, 0, entry.id3TagBytes);
+
         }
 
 
@@ -478,17 +551,28 @@ bool mp3Load(const char* path)
     readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz, entry.channels);
 
     // after readMp3BitrateAndRate(...)
-    entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
-
+    //entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
+    entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps, entry.id3TagBytes);
     // 🔍 If duration looks suspicious, force accurate scan
     if (entry.durationSeconds < 5 || entry.durationSeconds > 3600)
     {
-        entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
+        entry.durationSeconds = getMp3DurationSeconds(path, 0, entry.id3TagBytes);
+
+        //entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
     }
 
 
     playlistAdd(path);
     playlistMetadata.push_back(entry);
+    debugLog("\n=== MP3 LOADED ===\n");
+    debugLog("File: %s\n", path);
+    debugLog("Title: %s\n", entry.title);
+    debugLog("Artist: %s\n", entry.artist);
+    debugLog("Bitrate: %d kbps\n", entry.bitrateKbps);
+    debugLog("SampleRate: %d kHz\n", entry.sampleRateKHz);
+    debugLog("Channels: %d\n", entry.channels);
+    debugLog("Duration: %d sec\n", entry.durationSeconds);
+    debugLog("==================\n\n");
 
     return true;
 }
