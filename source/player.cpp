@@ -17,7 +17,7 @@ static bool musicFinished = false;
 static u64 trackStartTick = 0;
 static int currentTrackLength = 0;
 
-// 🎚 Master controls
+// Master controls
 static float g_volume   = 1.0f;   // 0.0 – 1.0
 static float g_pan      = 0.0f;   // -1.0 left … +1.0 right
 static float g_leftMix  = 1.0f;   // calculated output level
@@ -125,7 +125,7 @@ void playerInit()
 {
     if (Mix_OpenAudio(48000, MIX_DEFAULT_FORMAT, 2, 4096) < 0)
     {
-        printf("Mix_OpenAudio error: %s\n", Mix_GetError());
+      printf("Mix_OpenAudio error: %s\n", Mix_GetError());
     }
 
     Mix_SetPostMix(postmixCallback, NULL);
@@ -143,30 +143,58 @@ void playerPlay(int index)
     const char* path = playlistGetTrack(index);
     if (!path) return;
 
+    // STOP AUDIO THREAD FIRST
+    Mix_HaltMusic();
+    Mix_HookMusicFinished(NULL);
+    SDL_Delay(20);
+
+    // 🧹 FREE OLD TRACK SAFELY
     if (currentMusic)
     {
-        Mix_HaltMusic();
         Mix_FreeMusic(currentMusic);
+        currentMusic = NULL;
     }
 
-    currentMusic = Mix_LoadMUS(path);
-    if (!currentMusic) return;
+    // 🎵 LOAD NEW TRACK
+    Mix_Music* newMusic = Mix_LoadMUS(path);
+    if (!newMusic)
+    {
+        printf("Mix_LoadMUS failed: %s\n", Mix_GetError());
+        return;
+    }
 
-    Mix_PlayMusic(currentMusic, 1);
+    currentMusic = newMusic;
+
+    // ▶️ START PLAYBACK
+    if (Mix_PlayMusic(currentMusic, 1) == -1)
+    {
+        printf("Mix_PlayMusic failed: %s\n", Mix_GetError());
+        Mix_FreeMusic(currentMusic);
+        currentMusic = NULL;
+        return;
+    }
+
+    // Restore callback
+    Mix_HookMusicFinished(musicFinishedCallback);
 
     currentTrackIndex = index;
     musicFinished = false;
-
     trackStartTick = svcGetSystemTick();
 
     const Mp3MetadataEntry* md = mp3GetTrackMetadata(index);
     currentTrackLength = md ? md->durationSeconds : 0;
 }
 
+
 /* ---------- Stop playback ---------- */
 void playerStop()
 {
+    // Stop playback and detach callback first
+    Mix_HookMusicFinished(NULL);
     Mix_HaltMusic();
+
+    // Give decoder thread time to exit cleanly
+    SDL_Delay(20);
 
     if (currentMusic)
     {
@@ -177,7 +205,40 @@ void playerStop()
     currentTrackIndex = -1;
     currentTrackLength = 0;
     trackStartTick = 0;
+    musicFinished = false;
 }
+
+void playerShutdown()
+{
+    if (!Mix_QuerySpec(NULL, NULL, NULL))
+        return; // mixer never initialized
+
+    //  Stop new callbacks immediately
+    Mix_HookMusicFinished(NULL);
+    Mix_SetPostMix(NULL, NULL);
+
+    // Lock audio so callback can't run
+    SDL_LockAudio();
+
+    // ⏹ Stop playback
+    Mix_HaltMusic();
+
+    // Free music safely
+    if (currentMusic)
+    {
+        Mix_FreeMusic(currentMusic);
+        currentMusic = NULL;
+    }
+
+    SDL_UnlockAudio();
+
+    // Close audio device AFTER everything is stopped
+    Mix_CloseAudio();
+    Mix_Quit();
+}
+
+
+
 
 /* ---------- Auto-next handling ---------- */
 void playerUpdate()
@@ -196,36 +257,6 @@ void playerUpdate()
     {
         playerStop();
     }
-}
-
-static void readID3v1Fallback(const char* path, Mp3MetadataEntry& entry)
-{
-    if (entry.artist[0] && entry.title[0]) return; // already have data
-
-    FILE* f = fopen(path, "rb");
-    if (!f) return;
-
-    fseek(f, -128, SEEK_END);
-
-    char tag[128];
-    if (fread(tag, 1, 128, f) != 128) { fclose(f); return; }
-
-    if (memcmp(tag, "TAG", 3) == 0)
-    {
-        if (entry.title[0] == 0)
-        {
-            memcpy(entry.title, tag + 3, 30);
-            entry.title[30] = 0;
-        }
-
-        if (entry.artist[0] == 0)
-        {
-            memcpy(entry.artist, tag + 33, 30);
-            entry.artist[30] = 0;
-        }
-    }
-
-    fclose(f);
 }
 
 

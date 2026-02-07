@@ -33,6 +33,9 @@ static const float PEAK_FALL_SPEED = 2.0f;        // pixels per frame
 
 extern float g_fftInput[FFT_SIZE];
 
+
+
+
 static void drawPanSlider(SDL_Renderer* renderer,
                           SDL_Texture* texPan,
                           SDL_Rect barRect)

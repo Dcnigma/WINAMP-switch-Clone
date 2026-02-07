@@ -8,7 +8,25 @@
 
 static std::vector<Mp3MetadataEntry> playlistMetadata;
 
+
+
 /* ---------- Helpers ---------- */
+
+void debugLog(const char* fmt, ...)
+{
+    static bool initialized = false;
+    if (!initialized) {
+        socketInitializeDefault();
+        nxlinkStdio();
+        initialized = true;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
+    fflush(stdout);
+}
 
 // Convert ID3v2 syncsafe integer to int
 static unsigned int syncsafeToInt(unsigned char* b)
@@ -141,44 +159,74 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
     unsigned char header[10];
     if (fread(header, 1, 10, f) != 10) { fclose(f); return; }
 
-    // Not an ID3v2 tag → nothing to read
     if (memcmp(header, "ID3", 3) != 0) { fclose(f); return; }
 
-    //  Get total tag size (syncsafe int)
+    int version = header[3];   // 2, 3 or 4
     unsigned int tagSize = syncsafeToInt(&header[6]);
-
-    // Tag size does NOT include header, so add 10
     long tagEnd = 10 + tagSize;
+
+    printf("ID3v2.%d tag detected in %s\n", version, path);
 
     while (ftell(f) < tagEnd)
     {
-        char frameId[5] = {0};
-        unsigned char sizeBytes[4];
+        if (version == 2)
+        {
+            // -------- ID3v2.2 (3-char frame IDs) --------
+            char frameId[4] = {0};
+            unsigned char sizeBytes[3];
 
-        if (fread(frameId, 1, 4, f) != 4) break;
-        if (frameId[0] == 0) break;
+            if (fread(frameId, 1, 3, f) != 3) break;
+            if (frameId[0] == 0) break;
 
-        if (fread(sizeBytes, 1, 4, f) != 4) break;
+            if (fread(sizeBytes, 1, 3, f) != 3) break;
 
-        // skip flags
-        fseek(f, 2, SEEK_CUR);
+            unsigned int frameSize =
+                (sizeBytes[0] << 16) | (sizeBytes[1] << 8) | sizeBytes[2];
 
-        unsigned int frameSize =
-            (header[4] == 4)
-            ? syncsafeToInt(sizeBytes)
-            : (sizeBytes[0]<<24)|(sizeBytes[1]<<16)|(sizeBytes[2]<<8)|(sizeBytes[3]);
+            printf("Frame (v2.2): %s Size: %u\n", frameId, frameSize);
 
-        if (frameSize == 0) break;
+            if (frameSize == 0) break;
 
-        if (strcmp(frameId,"TIT2")==0)
-            readTextFrame(f, frameSize, entry.title, sizeof(entry.title));
-        else if (strcmp(frameId,"TPE1")==0) // Lead artist
-            readTextFrame(f, frameSize, entry.artist, sizeof(entry.artist));
-
-        else if (strcmp(frameId,"TPE2")==0 && entry.artist[0] == 0) // Fallback: Album artist
-            readTextFrame(f, frameSize, entry.artist, sizeof(entry.artist));
+            if (strcmp(frameId,"TT2")==0)           // Title
+                readTextFrame(f, frameSize, entry.title, sizeof(entry.title));
+            else if (strcmp(frameId,"TP1")==0)      // Artist
+                readTextFrame(f, frameSize, entry.artist, sizeof(entry.artist));
+            else if (strcmp(frameId,"TP2")==0 && entry.artist[0]==0) // Album artist fallback
+                readTextFrame(f, frameSize, entry.artist, sizeof(entry.artist));
+            else
+                fseek(f, frameSize, SEEK_CUR);
+        }
         else
-            fseek(f, frameSize, SEEK_CUR);
+        {
+            // -------- ID3v2.3 / 2.4 (4-char IDs) --------
+            char frameId[5] = {0};
+            unsigned char sizeBytes[4];
+
+            if (fread(frameId, 1, 4, f) != 4) break;
+            if (frameId[0] == 0) break;
+
+            if (fread(sizeBytes, 1, 4, f) != 4) break;
+
+            fseek(f, 2, SEEK_CUR); // flags
+
+            unsigned int frameSize =
+                (version == 4)
+                ? syncsafeToInt(sizeBytes)
+                : (sizeBytes[0]<<24)|(sizeBytes[1]<<16)|(sizeBytes[2]<<8)|sizeBytes[3];
+
+            printf("Frame: %s Size: %u\n", frameId, frameSize);
+
+            if (frameSize == 0) break;
+
+            if (strcmp(frameId,"TIT2")==0)
+                readTextFrame(f, frameSize, entry.title, sizeof(entry.title));
+            else if (strcmp(frameId,"TPE1")==0)
+                readTextFrame(f, frameSize, entry.artist, sizeof(entry.artist));
+            else if (strcmp(frameId,"TPE2")==0 && entry.artist[0]==0)
+                readTextFrame(f, frameSize, entry.artist, sizeof(entry.artist));
+            else
+                fseek(f, frameSize, SEEK_CUR);
+        }
     }
 
     fclose(f);

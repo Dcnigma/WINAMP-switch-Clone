@@ -4,6 +4,8 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <switch.h>      // gives socketInitializeDefault + nxlinkStdio
+#include <stdarg.h>      // for va_list
 
 struct Mp3MetadataEntry
 {

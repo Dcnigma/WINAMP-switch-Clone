@@ -98,7 +98,7 @@ static void importFolder(const char* path)
 
     std::sort(mp3Files.begin(), mp3Files.end());
 
-    // 🔥 ensure clean state before bulk add
+    // ensure clean state before bulk add
     playlistClear();
     mp3ClearMetadata();
 

@@ -15,6 +15,7 @@ static u64 lastPlaybackActivityTick = 0;
 static bool stayAwakeActive = true;
 
 
+
 void updateStayAwakeLogic()
 {
     u64 now = svcGetSystemTick();
@@ -51,6 +52,9 @@ int main()
 
     // --- Initialize ---
     romfsInit();
+    socketInitializeDefault();
+    nxlinkStdio();
+    printf("NXLink Active\n");
 
     // Prevent screen dimming / sleep while app is running
 
@@ -146,9 +150,11 @@ int main()
         }
 
         playerUpdate();
-        // Exit
+        // Exit with PLUS
         if (down & HidNpadButton_Plus)
-            break;
+        {
+            break;   // just leave loop
+        }
 
         // File browser open
         if (fileBrowserIsActive())
@@ -222,6 +228,7 @@ int main()
     if (fontBig) TTF_CloseFont(fontBig);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    playerShutdown();
 
     IMG_Quit();
     TTF_Quit();
