@@ -208,34 +208,33 @@ void playerStop()
     musicFinished = false;
 }
 
-void playerShutdown()
-{
-    if (!Mix_QuerySpec(NULL, NULL, NULL))
-        return; // mixer never initialized
+// void playerShutdown()
+// {
+//     if (!Mix_QuerySpec(NULL, NULL, NULL))
+//         return; // mixer never initialized
+//
+//     // Stop callbacks FIRST
+//     Mix_HookMusicFinished(NULL);
+//     Mix_SetPostMix(NULL, NULL);
+//
+//     // Stop playback
+//     Mix_HaltMusic();
+//
+//     // Give decoder thread time to exit cleanly
+//     SDL_Delay(50);
+//
+//     // Free loaded music
+//     if (currentMusic)
+//     {
+//         Mix_FreeMusic(currentMusic);
+//         currentMusic = NULL;
+//     }
+//
+//     // Now it is safe to close audio
+//     Mix_CloseAudio();
+//     Mix_Quit();
+// }
 
-    //  Stop new callbacks immediately
-    Mix_HookMusicFinished(NULL);
-    Mix_SetPostMix(NULL, NULL);
-
-    // Lock audio so callback can't run
-    SDL_LockAudio();
-
-    // ⏹ Stop playback
-    Mix_HaltMusic();
-
-    // Free music safely
-    if (currentMusic)
-    {
-        Mix_FreeMusic(currentMusic);
-        currentMusic = NULL;
-    }
-
-    SDL_UnlockAudio();
-
-    // Close audio device AFTER everything is stopped
-    Mix_CloseAudio();
-    Mix_Quit();
-}
 
 
 

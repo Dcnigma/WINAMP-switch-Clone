@@ -5,6 +5,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include "player.h"
+#include <mpg123.h>
 
 static std::vector<Mp3MetadataEntry> playlistMetadata;
 
@@ -351,16 +352,40 @@ static void readMp3BitrateAndRate(const char* path,
     fclose(f);
 }
 
-static int getMp3DurationSeconds(const char* path, int bitrateKbps)
+int getMp3DurationSeconds(const char* path, int bitrateKbps)
 {
+    // FAST PATH — works for most CBR files
     struct stat st;
-    if (stat(path, &st) != 0) return 0;
-
-    if (bitrateKbps > 0)
+    if (bitrateKbps > 0 && stat(path, &st) == 0)
+    {
         return (int)((st.st_size * 8.0) / (bitrateKbps * 1000.0));
+    }
 
-    return 0; // VBR handled earlier via Xing/VBRI
+    // SLOW PATH — only for problematic files
+    mpg123_handle* mh = mpg123_new(NULL, NULL);
+    if (!mh) return 0;
+
+    if (mpg123_open(mh, path) != MPG123_OK)
+    {
+        mpg123_delete(mh);
+        return 0;
+    }
+
+    mpg123_scan(mh);  // heavy, but now rare
+
+    off_t samples = mpg123_length(mh);
+    long rate;
+    int ch, enc;
+    mpg123_getformat(mh, &rate, &ch, &enc);
+
+    mpg123_close(mh);
+    mpg123_delete(mh);
+
+    if (samples <= 0 || rate <= 0) return 0;
+
+    return samples / rate;
 }
+
 
 /* ---------- Public API ---------- */
 
@@ -404,8 +429,8 @@ void mp3ReloadAllMetadata()
         readMp3Metadata(path, entry);
         readID3v1Fallback(path, entry);
         readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz, entry.channels);
-
         entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
+
 
         playlistMetadata.push_back(entry);
     }
@@ -432,8 +457,8 @@ bool mp3Load(const char* path)
     Mp3MetadataEntry entry;
     readMp3Metadata(path, entry);
     readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz, entry.channels);
-
     entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps);
+
 
     playlistAdd(path);
     playlistMetadata.push_back(entry);

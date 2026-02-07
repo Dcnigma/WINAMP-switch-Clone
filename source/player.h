@@ -21,7 +21,7 @@ void  playerSetVolume(float v);
 float playerGetVolume();
 void playerAdjustVolume(float delta);
 
-void playerShutdown();
+//void playerShutdown();
 
 void  playerSetPan(float pan);
 float playerGetPan();

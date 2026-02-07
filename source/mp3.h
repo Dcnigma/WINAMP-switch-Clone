@@ -18,7 +18,8 @@ struct Mp3MetadataEntry
 };
 
 // --- Playlist metadata management ---
-void mp3LoadPlaylist();                        // build metadata for all files in playlist
+void mp3LoadPlaylist();
+
 const Mp3MetadataEntry* mp3GetTrackMetadata(int index);
 int mp3GetPlaylistCount();
 
