@@ -8,6 +8,7 @@
 #include "playlist.h"
 #include "player.h"
 
+
 #define FB_W 1920
 #define FB_H 1080
 
@@ -218,6 +219,7 @@ int main()
 
     // --- Cleanup ---
     playerStop();
+    //playerShutdown();
     SDL_Delay(50);
     if (font) TTF_CloseFont(font);
     if (skin) SDL_DestroyTexture(skin);

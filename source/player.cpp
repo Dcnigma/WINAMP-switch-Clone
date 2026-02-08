@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <switch.h>
 #include <math.h>
+#include <mpg123.h>
 
 #define FFT_SIZE 1024
 
@@ -128,6 +129,8 @@ void playerInit()
       printf("Mix_OpenAudio error: %s\n", Mix_GetError());
     }
 
+    mpg123_init();   // 🔥 REQUIRED — fixes random crashes
+
     Mix_SetPostMix(postmixCallback, NULL);
 
     Mix_HookMusicFinished(musicFinishedCallback);
@@ -143,10 +146,7 @@ void playerPlay(int index)
     const char* path = playlistGetTrack(index);
     if (!path) return;
 
-    // lock audio so mixer thread can't decode while we switch
-    SDL_LockAudio();
-
-    // stop previous
+    // Stop previous music safely
     Mix_HookMusicFinished(NULL);
     Mix_HaltMusic();
 
@@ -156,32 +156,22 @@ void playerPlay(int index)
         currentMusic = nullptr;
     }
 
-    // load new music
-    Mix_Music* newMusic = Mix_LoadMUS(path);
-    if (!newMusic)
+    currentMusic = Mix_LoadMUS(path);
+    if (!currentMusic)
     {
         printf("Mix_LoadMUS failed: %s\n", Mix_GetError());
-        SDL_UnlockAudio();
         return;
     }
 
-    currentMusic = newMusic;
-
-    // start playback
     if (Mix_PlayMusic(currentMusic, 1) == -1)
     {
         printf("Mix_PlayMusic failed: %s\n", Mix_GetError());
         Mix_FreeMusic(currentMusic);
         currentMusic = nullptr;
-        SDL_UnlockAudio();
         return;
     }
 
-    // restore callback
     Mix_HookMusicFinished(musicFinishedCallback);
-
-    // unlock audio so decoding can proceed
-    SDL_UnlockAudio();
 
     currentTrackIndex = index;
     musicFinished = false;
@@ -196,8 +186,6 @@ void playerPlay(int index)
 /* ---------- Stop playback ---------- */
 void playerStop()
 {
-    SDL_LockAudio();
-
     Mix_HookMusicFinished(NULL);
     Mix_HaltMusic();
 
@@ -211,38 +199,7 @@ void playerStop()
     currentTrackLength = 0;
     trackStartTick = 0;
     musicFinished = false;
-
-    SDL_UnlockAudio();
 }
-
-
-
-// void playerShutdown()
-// {
-//     if (!Mix_QuerySpec(NULL, NULL, NULL))
-//         return; // mixer never initialized
-//
-//     // Stop callbacks FIRST
-//     Mix_HookMusicFinished(NULL);
-//     Mix_SetPostMix(NULL, NULL);
-//
-//     // Stop playback
-//     Mix_HaltMusic();
-//
-//     // Give decoder thread time to exit cleanly
-//     SDL_Delay(50);
-//
-//     // Free loaded music
-//     if (currentMusic)
-//     {
-//         Mix_FreeMusic(currentMusic);
-//         currentMusic = NULL;
-//     }
-//
-//     // Now it is safe to close audio
-//     Mix_CloseAudio();
-//     Mix_Quit();
-// }
 
 
 

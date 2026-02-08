@@ -365,33 +365,38 @@ static void readMp3BitrateAndRate(const char* path,
     fclose(f);
 }
 
-int getMp3DurationSeconds(const char* path, int bitrateKbps, int id3TagBytes)
+int getMp3DurationSeconds(const char* path, int& bitrateKbps, int id3TagBytes)
 {
     struct stat st;
     if (stat(path, &st) != 0)
         return 0;
 
-    // FAST PATH — file size + bitrate
-    // FAST PATH — file size + bitrate
+    long audioBytes = st.st_size - id3TagBytes;
+    if (audioBytes < 0) audioBytes = st.st_size;
+
+    int fastDuration = 0;
+
     if (bitrateKbps > 0)
     {
-        long audioBytes = st.st_size - id3TagBytes;
-        if (audioBytes < 0) audioBytes = st.st_size;
-
-        int fastDuration = (int)((audioBytes * 8.0) / (bitrateKbps * 1000.0));
+        fastDuration = (int)((audioBytes * 8.0) / (bitrateKbps * 1000.0));
 
         debugLog("[MP3] FAST duration (audioBytes=%ld bitrate=%d) = %d sec\n",
                  audioBytes, bitrateKbps, fastDuration);
 
-        // 🚨 If bitrate came from CBR fallback (not Xing/VBRI),
-        // it might actually be VBR → verify with light mpg123 check
-        if (bitrateKbps <= 160)  // most fake-CBR VBR files start low
+        if (bitrateKbps <= 192)
         {
             debugLog("[MP3] Verifying duration — possible VBR without header\n");
 
             mpg123_handle* mh = mpg123_new(NULL, NULL);
-            if (mh && mpg123_open(mh, path) == MPG123_OK)
+            if (mh)
             {
+                // 🚫 Tell mpg123 to ignore ID3v2 completely
+                mpg123_param(mh, MPG123_ADD_FLAGS, MPG123_SKIP_ID3V2, 0);
+
+                if (mpg123_open(mh, path) == MPG123_OK)
+                {
+
+
                 off_t samples = mpg123_length(mh);
                 long rate;
                 int ch, enc;
@@ -400,13 +405,15 @@ int getMp3DurationSeconds(const char* path, int bitrateKbps, int id3TagBytes)
                 if (samples > 0 && rate > 0)
                 {
                     int realDuration = samples / rate;
-
                     debugLog("[MP3] mpg123 quick length = %d sec\n", realDuration);
 
-                    // If difference is big → trust mpg123 instead
                     if (abs(realDuration - fastDuration) > 5)
                     {
                         debugLog("[MP3] FAST duration rejected (VBR detected)\n");
+
+                        bitrateKbps = (int)((audioBytes * 8.0) / (realDuration * 1000.0));
+                        debugLog("[MP3] Corrected average bitrate = %d kbps\n", bitrateKbps);
+
                         mpg123_close(mh);
                         mpg123_delete(mh);
                         return realDuration;
@@ -420,24 +427,24 @@ int getMp3DurationSeconds(const char* path, int bitrateKbps, int id3TagBytes)
 
         if (fastDuration > 10 && fastDuration < 7200)
             return fastDuration;
-
-        debugLog("[MP3] FAST duration rejected, using full scan\n");
     }
-
-
-
-    // SLOW PATH — only for broken/VBR-without-header files
+}
+    // Full scan fallback
     mpg123_handle* mh = mpg123_new(NULL, NULL);
     if (!mh) return 0;
+
+    // 🚫 Ignore ID3v2 here as well
+    mpg123_param(mh, MPG123_ADD_FLAGS, MPG123_SKIP_ID3V2, 0);
 
     if (mpg123_open(mh, path) != MPG123_OK)
     {
         mpg123_delete(mh);
         return 0;
     }
-    printf("[MP3] Using mpg123 FULL SCAN for duration (slow path)\n");
-    mpg123_scan(mh);  // heavy but rare now
 
+
+    debugLog("[MP3] Using mpg123 FULL SCAN for duration (slow path)\n");
+    mpg123_scan(mh);
 
     off_t samples = mpg123_length(mh);
     long rate;
@@ -446,18 +453,16 @@ int getMp3DurationSeconds(const char* path, int bitrateKbps, int id3TagBytes)
 
     int finalDuration = 0;
     if (samples > 0 && rate > 0)
+    {
         finalDuration = samples / rate;
-
-    debugLog("[MP3] mpg123 duration = %d sec (samples=%lld rate=%ld)\n",
-             finalDuration, samples, rate);
+        bitrateKbps = (int)((audioBytes * 8.0) / (finalDuration * 1000.0));
+    }
 
     mpg123_close(mh);
     mpg123_delete(mh);
 
     return finalDuration;
-
 }
-
 
 /* ---------- Public API ---------- */
 
@@ -489,7 +494,9 @@ bool mp3AddToPlaylist(const char* path)
     if (entry.durationSeconds < 5 || entry.durationSeconds > 3600)
     {
 //        entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
-        entry.durationSeconds = getMp3DurationSeconds(path, 0, entry.id3TagBytes);
+        int tempBitrate = 0;
+        entry.durationSeconds = getMp3DurationSeconds(path, tempBitrate, entry.id3TagBytes);
+        entry.bitrateKbps = tempBitrate;
 
     }
 
@@ -519,7 +526,9 @@ void mp3ReloadAllMetadata()
         if (entry.durationSeconds < 5 || entry.durationSeconds > 3600)
         {
 //            entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
-            entry.durationSeconds = getMp3DurationSeconds(path, 0, entry.id3TagBytes);
+            int tempBitrate = 0;
+            entry.durationSeconds = getMp3DurationSeconds(path, tempBitrate, entry.id3TagBytes);
+            entry.bitrateKbps = tempBitrate;
 
         }
 
@@ -556,7 +565,9 @@ bool mp3Load(const char* path)
     // 🔍 If duration looks suspicious, force accurate scan
     if (entry.durationSeconds < 5 || entry.durationSeconds > 3600)
     {
-        entry.durationSeconds = getMp3DurationSeconds(path, 0, entry.id3TagBytes);
+        int tempBitrate = 0;
+        entry.durationSeconds = getMp3DurationSeconds(path, tempBitrate, entry.id3TagBytes);
+        entry.bitrateKbps = tempBitrate;
 
         //entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
     }
