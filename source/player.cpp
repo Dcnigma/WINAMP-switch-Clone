@@ -18,6 +18,9 @@ static int fftWritePos = 0;
 static SDL_AudioDeviceID audioDev = 0;
 static mpg123_handle* mh = nullptr;
 
+static bool g_waitForDrain = false;
+
+
 /* 🔵 WINAMP STATE */
 static PlayerState g_state = {
     .trackIndex = -1,
@@ -122,11 +125,14 @@ void playerPlay(int index)
     if (index < 0 || index >= playlistGetCount())
         return;
 
+//    currentTrackIndex = index;
+
     const char* path = playlistGetTrack(index);
     if (!path)
         return;
 
     playerStop(); // 🔵 Winamp always stops first
+    g_waitForDrain = false;
 
     mh = mpg123_new(NULL, NULL);
     mpg123_param(mh, MPG123_ADD_FLAGS, MPG123_SKIP_ID3V2, 0);
@@ -197,12 +203,35 @@ void playerStop()
     memset(&g_state, 0, sizeof(g_state));
     g_state.trackIndex = -1;
 
+    g_waitForDrain = false;
+
     samplesPlayed = 0;
 }
 
 void playerUpdate()
 {
-    if (!g_state.isDecoding || !mh || !audioDev)
+    if (!mh || !audioDev)
+        return;
+
+    // 🔵 DRAIN PHASE (runs after decoding ends)
+    if (g_waitForDrain)
+    {
+        if (SDL_GetQueuedAudioSize(audioDev) == 0)
+        {
+            g_waitForDrain = false;
+
+            int next = g_state.trackIndex + 1;
+            if (next < playlistGetCount())
+                playerPlay(next);
+            else
+                playerStop();
+
+            return;
+        }
+    }
+
+    // 🔵 DECODING PHASE
+    if (!g_state.isDecoding)
         return;
 
     if (SDL_GetQueuedAudioSize(audioDev) > 48000 * 4)
@@ -228,11 +257,10 @@ void playerUpdate()
     if (err == MPG123_DONE)
     {
         g_state.isDecoding = false;
-
-        if (SDL_GetQueuedAudioSize(audioDev) == 0)
-            playerStop(); // 🔵 Winamp behavior
+        g_waitForDrain = true;   // 🔑 transition to drain
     }
 }
+
 
 const PlayerState* playerGetState()
 {
