@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 
+
 void playerInit();
 void playerPlay(int index);
 void playerStop();
@@ -17,21 +18,26 @@ bool playerIsPlaying();
 #define FFT_SIZE 1024
 extern float g_fftInput[FFT_SIZE];
 
-void  playerSetVolume(float v);
+void playerSetVolume(float v);
 float playerGetVolume();
 void playerAdjustVolume(float delta);
 
-//void playerShutdown();
 
-void  playerSetPan(float pan);
+void playerSetPan(float pan);
 float playerGetPan();
 
-
-int playerGetCurrentIndex();
+//int playerGetCurrentIndex();
 int playerGetCurrentTrackIndex();
 int playerGetElapsedSeconds();
 int playerGetTrackLength();
 int playlistGetCurrentIndex();
+
+int  playerGetElapsedSeconds();
+int  playerGetTrackLength();
+
+
+
+
 
 #ifdef __cplusplus
 }

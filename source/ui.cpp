@@ -757,7 +757,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
 
      // --- Compute elapsed seconds so far in playlist ---
      int playlistElapsed = 0;
-     int currentTrack = playerGetCurrentIndex();
+     int currentTrack = playerGetCurrentTrackIndex();
      for (int i = 0; i < currentTrack; i++)
      {
          const Mp3MetadataEntry* md = mp3GetTrackMetadata(i);

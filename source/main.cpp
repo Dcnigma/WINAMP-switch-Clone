@@ -190,7 +190,7 @@ int main()
         // --- Display currently playing song metadata ---
         char songText[256] = "Stopped";
 
-        int playingIndex = playerGetCurrentIndex();
+        int playingIndex = playerGetCurrentTrackIndex();
 
         if (playingIndex >= 0 && playingIndex < mp3GetPlaylistCount())
         {

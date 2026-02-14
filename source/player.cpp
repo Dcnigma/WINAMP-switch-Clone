@@ -1,48 +1,53 @@
 #include "player.h"
+#include "player_state.h"
 #include "playlist.h"
-#include "mp3.h"       // for Mp3MetadataEntry
-#include <SDL_mixer.h>
+#include "mp3.h"
+
+#include <SDL.h>
 #include <stdio.h>
 #include <switch.h>
-#include <math.h>
 #include <mpg123.h>
+#include <string.h>
 
 #define FFT_SIZE 1024
+#define DECODE_BUFFER 8192
 
 float g_fftInput[FFT_SIZE] = {0};
 static int fftWritePos = 0;
 
-static Mix_Music* currentMusic = nullptr;
-static int currentTrackIndex = -1;
-static bool musicFinished = false;
-static u64 trackStartTick = 0;
-static int currentTrackLength = 0;
+static SDL_AudioDeviceID audioDev = 0;
+static mpg123_handle* mh = nullptr;
 
-// Master controls
-static float g_volume   = 1.0f;   // 0.0 – 1.0
-static float g_pan      = 0.0f;   // -1.0 left … +1.0 right
-static float g_leftMix  = 1.0f;   // calculated output level
+/* 🔵 WINAMP STATE */
+static PlayerState g_state = {
+    .trackIndex = -1,
+    .elapsedSeconds = 0,
+    .durationSeconds = 0,
+    .sampleRate = 0,
+    .channels = 0,
+    .isPlaying = false,
+    .isDecoding = false
+};
+
+/* 🔵 AUDIO TIME TRACKING */
+static uint64_t samplesPlayed = 0;
+
+/* MIXING */
+static float g_volume   = 1.0f;
+static float g_pan      = 0.0f;
+static float g_leftMix  = 1.0f;
 static float g_rightMix = 1.0f;
 
-static void postmixCallback(void* udata, Uint8* stream, int len)
-{
-    int16_t* samples = (int16_t*)stream;
-    int sampleCount = len / sizeof(int16_t);
 
-    for (int i = 0; i < sampleCount; i += 2)
+static void processSamples(int16_t* samples, int count)
+{
+    for (int i = 0; i < count; i += 2)
     {
         float left  = samples[i]     / 32768.0f;
         float right = samples[i + 1] / 32768.0f;
 
-        // Apply volume & pan
         left  *= g_leftMix;
         right *= g_rightMix;
-
-        // Clamp
-        if (left  > 1.0f) left  = 1.0f;
-        if (left  < -1.0f) left  = -1.0f;
-        if (right > 1.0f) right = 1.0f;
-        if (right < -1.0f) right = -1.0f;
 
         samples[i]     = (int16_t)(left  * 32767);
         samples[i + 1] = (int16_t)(right * 32767);
@@ -52,43 +57,35 @@ static void postmixCallback(void* udata, Uint8* stream, int len)
     }
 }
 
+
+
+/* ---------------------------------------------------- */
+/* VOLUME + PAN                                         */
+/* ---------------------------------------------------- */
 void playerApplyVolumePan()
 {
     float left  = g_volume;
     float right = g_volume;
 
-    if (g_pan < 0.0f)          // leaning LEFT
-        right *= (1.0f + g_pan);
-    else if (g_pan > 0.0f)     // leaning RIGHT
-        left  *= (1.0f - g_pan);
+    if (g_pan < 0.0f) right *= (1.0f + g_pan);
+    else if (g_pan > 0.0f) left *= (1.0f - g_pan);
 
     if (left  < 0.0f) left  = 0.0f;
     if (right < 0.0f) right = 0.0f;
 
     g_leftMix  = left;
     g_rightMix = right;
-
-    // Base volume still controlled by SDL_mixer
-    Mix_VolumeMusic((int)(g_volume * MIX_MAX_VOLUME));
 }
-
-
 
 void playerSetPan(float pan)
 {
     if (pan < -1.0f) pan = -1.0f;
     if (pan >  1.0f) pan =  1.0f;
     g_pan = pan;
-
-    playerApplyVolumePan();   // update real audio output
+    playerApplyVolumePan();
 }
 
-
-
-float playerGetPan()
-{
-    return g_pan;
-}
+float playerGetPan() { return g_pan; }
 
 void playerSetVolume(float v)
 {
@@ -96,160 +93,168 @@ void playerSetVolume(float v)
     if (v > 1.0f) v = 1.0f;
     g_volume = v;
     playerApplyVolumePan();
-    Mix_VolumeMusic((int)(v * MIX_MAX_VOLUME));
 }
 
-float playerGetVolume()
-{
-    return g_volume;
-}
+float playerGetVolume() { return g_volume; }
+void playerAdjustVolume(float delta) { playerSetVolume(g_volume + delta); }
 
-void playerAdjustVolume(float delta)
-{
-    playerSetVolume(g_volume + delta);
-}
-
-
-/* ---------- Callback when a song ends ---------- */
-static void musicFinishedCallback()
-{
-    musicFinished = true;
-}
-
-int playerGetCurrentTrackIndex()
-{
-    return currentTrackIndex;
-}
-
-/* ---------- Init ---------- */
 void playerInit()
 {
-    if (Mix_OpenAudio(48000, MIX_DEFAULT_FORMAT, 2, 4096) < 0)
-    {
-      printf("Mix_OpenAudio error: %s\n", Mix_GetError());
-    }
-
-    mpg123_init();   // 🔥 REQUIRED — fixes random crashes
-
-    Mix_SetPostMix(postmixCallback, NULL);
-
-    Mix_HookMusicFinished(musicFinishedCallback);
+    mpg123_init();
     playerSetVolume(1.0f);
 }
 
-/* ---------- Play a track ---------- */
+void playerShutdown()
+{
+    playerStop();
+
+    if (audioDev)
+    {
+        SDL_CloseAudioDevice(audioDev);
+        audioDev = 0;
+    }
+
+    mpg123_exit();
+}
+
 void playerPlay(int index)
 {
     if (index < 0 || index >= playlistGetCount())
         return;
 
     const char* path = playlistGetTrack(index);
-    if (!path) return;
+    if (!path)
+        return;
 
-    // Stop previous music safely
-    Mix_HookMusicFinished(NULL);
-    Mix_HaltMusic();
+    playerStop(); // 🔵 Winamp always stops first
 
-    if (currentMusic)
+    mh = mpg123_new(NULL, NULL);
+    mpg123_param(mh, MPG123_ADD_FLAGS, MPG123_SKIP_ID3V2, 0);
+    mpg123_param(mh, MPG123_FORCE_STEREO, 1, 0);
+
+    if (mpg123_open(mh, path) != MPG123_OK)
     {
-        Mix_FreeMusic(currentMusic);
-        currentMusic = nullptr;
-    }
-
-    currentMusic = Mix_LoadMUS(path);
-    if (!currentMusic)
-    {
-        printf("Mix_LoadMUS failed: %s\n", Mix_GetError());
+        mpg123_delete(mh);
+        mh = nullptr;
         return;
     }
 
-    if (Mix_PlayMusic(currentMusic, 1) == -1)
+    long rate;
+    int ch, enc;
+    mpg123_getformat(mh, &rate, &ch, &enc);
+
+    mpg123_format_none(mh);
+    mpg123_format(mh, rate, ch, MPG123_ENC_SIGNED_16);
+
+    /* 🔵 OPEN SDL WITH MATCHING FORMAT */
+    SDL_AudioSpec want{}, have{};
+    want.freq = rate;
+    want.format = AUDIO_S16SYS;
+    want.channels = ch;
+    want.samples = 4096;
+
+    audioDev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
+    if (!audioDev)
     {
-        printf("Mix_PlayMusic failed: %s\n", Mix_GetError());
-        Mix_FreeMusic(currentMusic);
-        currentMusic = nullptr;
+        mpg123_close(mh);
+        mpg123_delete(mh);
+        mh = nullptr;
         return;
     }
 
-    Mix_HookMusicFinished(musicFinishedCallback);
+    SDL_PauseAudioDevice(audioDev, 0);
 
-    currentTrackIndex = index;
-    musicFinished = false;
-    trackStartTick = svcGetSystemTick();
+    /* 🔵 SET PLAYER STATE */
+    g_state.trackIndex = index;
+    g_state.sampleRate = rate;
+    g_state.channels   = ch;
+    g_state.isDecoding = true;
+    g_state.isPlaying  = true;
 
-    const Mp3MetadataEntry* md = mp3GetTrackMetadata(index);
-    currentTrackLength = md ? md->durationSeconds : 0;
+    samplesPlayed = 0;
+
+    off_t len = mpg123_length(mh);
+    g_state.durationSeconds =
+        (len > 0) ? (int)(len / rate) : 0;
 }
 
-
-
-/* ---------- Stop playback ---------- */
 void playerStop()
 {
-    Mix_HookMusicFinished(NULL);
-    Mix_HaltMusic();
-
-    if (currentMusic)
+    if (audioDev)
     {
-        Mix_FreeMusic(currentMusic);
-        currentMusic = NULL;
+        SDL_ClearQueuedAudio(audioDev);
+        SDL_CloseAudioDevice(audioDev);
+        audioDev = 0;
     }
 
-    currentTrackIndex = -1;
-    currentTrackLength = 0;
-    trackStartTick = 0;
-    musicFinished = false;
+    if (mh)
+    {
+        mpg123_close(mh);
+        mpg123_delete(mh);
+        mh = nullptr;
+    }
+
+    memset(&g_state, 0, sizeof(g_state));
+    g_state.trackIndex = -1;
+
+    samplesPlayed = 0;
 }
 
-
-
-
-
-/* ---------- Auto-next handling ---------- */
 void playerUpdate()
 {
-    if (!musicFinished)
+    if (!g_state.isDecoding || !mh || !audioDev)
         return;
 
-    musicFinished = false;
+    if (SDL_GetQueuedAudioSize(audioDev) > 48000 * 4)
+        return;
 
-    int next = currentTrackIndex + 1;
-    if (next < playlistGetCount())
+    unsigned char buffer[DECODE_BUFFER];
+    size_t done = 0;
+
+    int err = mpg123_read(mh, buffer, sizeof(buffer), &done);
+
+    if (done > 0)
     {
-        playerPlay(next);
+        int bytesPerSample = sizeof(int16_t) * g_state.channels;
+        samplesPlayed += done / bytesPerSample;
+
+        g_state.elapsedSeconds =
+            (int)(samplesPlayed / g_state.sampleRate);
+
+        processSamples((int16_t*)buffer, done / 2);
+        SDL_QueueAudio(audioDev, buffer, done);
     }
-    else
+
+    if (err == MPG123_DONE)
     {
-        playerStop();
+        g_state.isDecoding = false;
+
+        if (SDL_GetQueuedAudioSize(audioDev) == 0)
+            playerStop(); // 🔵 Winamp behavior
     }
 }
 
+const PlayerState* playerGetState()
+{
+    return &g_state;
+}
 
-/* ---------- Status helpers ---------- */
 bool playerIsPlaying()
 {
-    return Mix_PlayingMusic() != 0;
+    return g_state.isPlaying;
 }
 
-int playerGetCurrentIndex()
+int playerGetCurrentTrackIndex()
 {
-    return currentTrackIndex;
+    return g_state.trackIndex;
 }
 
-/* ---------- Elapsed / duration ---------- */
 int playerGetElapsedSeconds()
 {
-    if (currentTrackIndex < 0 || trackStartTick == 0)
-        return 0;
-
-    u64 now = svcGetSystemTick();
-    u64 diff = now - trackStartTick;
-
-    // Switch system tick frequency = 19.2 MHz
-    return diff / 19200000;
+    return g_state.elapsedSeconds;
 }
 
 int playerGetTrackLength()
 {
-    return currentTrackLength;
+    return g_state.durationSeconds;
 }
