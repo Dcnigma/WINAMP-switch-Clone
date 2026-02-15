@@ -7,7 +7,7 @@
 #include "filebrowser.h"
 #include "playlist.h"
 #include "player.h"
-
+#include "player_state.h"
 
 #define FB_W 1920
 #define FB_H 1080
@@ -87,15 +87,23 @@ int main()
 
     SDL_Texture* texVolume = IMG_LoadTexture(renderer, "romfs:/skins/VOLUME.png");
     if (!texVolume)
-        printf("Failed to load volume.png: %s\n", IMG_GetError());
+        printf("Failed to load VOLUME.png: %s\n", IMG_GetError());
 
     SDL_Texture* texPan = IMG_LoadTexture(renderer, "romfs:/skins/BALANCE.png");
     if (!texPan)
-        printf("Failed to load volume.png: %s\n", IMG_GetError());
+        printf("Failed to load BALANCE.png: %s\n", IMG_GetError());
 
     SDL_Texture* texPlaylistKnob = IMG_LoadTexture(renderer, "romfs:/skins/PlaylistKnob.png");
     if (!texPlaylistKnob)
-        printf("Failed to load volume.png: %s\n", IMG_GetError());
+        printf("Failed to load PlaylistKnob.png: %s\n", IMG_GetError());
+
+    SDL_Texture* texCbuttons = IMG_LoadTexture(renderer, "romfs:/skins/CBUTTONS.png");
+    if (!texCbuttons)
+        printf("Failed to load CBUTTONS.png: %s\n", IMG_GetError());
+
+    SDL_Texture* texSHUFREP = IMG_LoadTexture(renderer, "romfs:/skins/SHUFREP.png");
+    if (!texSHUFREP)
+        printf("Failed to load SHUFREP.png: %s\n", IMG_GetError());
 
     // --- At boot ---
     playlistClear();
@@ -129,6 +137,23 @@ int main()
 
         if (down & HidNpadButton_StickLRight)
             playerSetPan(playerGetPan() + 0.1f);
+
+
+        if (down & HidNpadButton_StickRRight)
+            playerNext();
+
+        if (down & HidNpadButton_StickRLeft)
+            playerPrev();
+
+        if (down & HidNpadButton_Y)
+            playerTogglePause();
+
+        if (down & HidNpadButton_StickRUp)
+            playerCycleRepeat();
+
+        if (down & HidNpadButton_StickRDown)
+            playerToggleShuffle();
+
 
 
         // ---------------------------
@@ -207,7 +232,7 @@ int main()
         }
 
 
-        uiRender(renderer, font, fontBig, skin, texProgIndicator, texVolume, texPan, texPlaylistKnob, songText);   // UI background
+        uiRender(renderer, font, fontBig, skin, texProgIndicator, texVolume, texPan, texPlaylistKnob, texCbuttons, texSHUFREP,  songText);   // UI background
 //        uiRender(renderer, font, smallFont, texProgIndicator, currentTitle);
 
         renderPlaylist(renderer, font);            // Playlist

@@ -2,6 +2,7 @@
 #include "mp3.h"
 #include "player.h"
 #include "playlist.h"
+#include "player_state.h"
 #include <SDL.h>
 #include <SDL_ttf.h>
 #include <SDL_image.h>
@@ -31,8 +32,97 @@ static char lastSongText[256] = {0};
 static float spectrumPeaks[SPECTRUM_BARS]  = {0}; // use float for smooth decay
 static const float PEAK_FALL_SPEED = 2.0f;        // pixels per frame
 
+// --- Player feature flags ---
+extern bool playerIsShuffleEnabled();
+extern bool playerIsRepeatEnabled();
+
 extern float g_fftInput[FFT_SIZE];
 
+enum CButtonType {
+    BTN_PREV,
+    BTN_PLAY,
+    BTN_PAUSE,
+    BTN_STOP,
+    BTN_NEXT,
+    BTN_EJECT
+};
+
+// ---- CBUTTONS.png ----
+// Default buttons (right column)
+SDL_Rect cb_default[] = {
+    {68,   0, 76, 91},   // previous
+    {68,  92, 76, 91},   // play
+    {68, 181, 76, 91},   // pause
+    {68, 273, 76, 91},   // stop
+    {68, 365, 76, 91},   // next
+    {72, 453, 76, 91}    // eject
+};
+
+SDL_Rect cb_pressed[] = {
+    {  0,   0, 69, 93},  // previous
+    {  0,  89, 69, 93},  // play
+    {  0, 181, 69, 93},  // pause
+    {  0, 273, 69, 93},  // stop
+    {  0, 365, 69, 93},  // next
+    {  0, 455, 69, 93}   // eject
+};
+
+
+enum ShufRepVisual {
+    SR_DEFAULT_OFF,
+    SR_PRESSED_OFF,
+    SR_DEFAULT_ON,
+    SR_PRESSED_ON
+};
+
+// Repeat button sprites (47x85)
+SDL_Rect rep_src[] = {
+    {209,  2, 47, 85},  // default off
+    {162,  2, 47, 85},  // pressed off
+    {115,  2, 47, 85},  // default on
+    { 68,  2, 47, 85}   // pressed on
+};
+
+// Shuffle button sprites (47x138)
+SDL_Rect shuf_src[] = {
+    {209, 87, 47,138},  // default off
+    {162, 87, 47,138},  // pressed off
+    {115, 87, 47,138},  // default on
+    { 68, 87, 47,138}   // pressed on
+};
+
+
+
+void DrawCButton(
+    SDL_Renderer* renderer,
+    SDL_Texture* tex,
+    CButtonType type,
+    const SDL_Rect& dst,
+    bool pressed
+) {
+    const SDL_Rect& src = pressed ? cb_pressed[type] : cb_default[type];
+    SDL_RenderCopy(renderer, tex, &src, &dst);
+}
+
+
+static void DrawShufRep(
+    SDL_Renderer* renderer,
+    SDL_Texture* tex,
+    const SDL_Rect* srcTable,
+    const SDL_Rect& dst,
+    bool enabled,
+    bool pressed
+)
+{
+    ShufRepVisual v;
+
+    if (enabled && pressed)      v = SR_PRESSED_ON;
+    else if (enabled)            v = SR_DEFAULT_ON;
+    else if (pressed)            v = SR_PRESSED_OFF;
+    else                         v = SR_DEFAULT_OFF;
+
+    SDL_RenderCopy(renderer, tex, &srcTable[v], &dst);
+}
 
 
 
@@ -517,7 +607,7 @@ static void drawPlaylistSlider(SDL_Renderer* renderer,
     const int trackX = 208;
     const int trackY = 1020;
     const int trackW = 326;
-    const int trackH = 30;
+//    const int trackH = 30;
 
     // --- Knob size ---
     const int knobW = 103;
@@ -547,7 +637,7 @@ static void drawPlaylistSlider(SDL_Renderer* renderer,
 
 
 // --- Render full UI ---
-void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, SDL_Texture* texVolume, SDL_Texture* texPan,  SDL_Texture* texPlaylistKnob, const char* songText)
+void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, SDL_Texture* texVolume, SDL_Texture* texPan,  SDL_Texture* texPlaylistKnob, SDL_Texture* texCbuttons, SDL_Texture* texSHUFREP, const char* songText)
 {
   if (!fftInitialized)
   {
@@ -596,6 +686,44 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     SDL_Rect ejectButton   = {1340, 532,100, 90};
     SDL_Rect shuffleButton = {1357, 642, 72,182};
     SDL_Rect repeatButton  = {1357, 825, 72,115};
+
+    bool isPlaying = playerIsPlaying();
+    bool isPaused  = playerIsPaused();   // add this getter if missing
+
+    DrawCButton(renderer, texCbuttons, BTN_PREV,  prevButton,  false);
+    DrawCButton(renderer, texCbuttons, BTN_PLAY,  playButton,  isPlaying && !isPaused);
+    DrawCButton(renderer, texCbuttons, BTN_PAUSE, pauseButton, isPaused);
+    DrawCButton(renderer, texCbuttons, BTN_STOP,  stopButton,  false);
+    DrawCButton(renderer, texCbuttons, BTN_NEXT,  nextButton,  false);
+    DrawCButton(renderer, texCbuttons, BTN_EJECT, ejectButton, false);
+
+
+    // --- Shuffle / Repeat ---
+    bool shuffleEnabled = playerIsShuffleEnabled();
+    bool repeatEnabled  = playerIsRepeatEnabled();
+
+    // Winamp: button only looks "pressed" on state change frame
+    bool shufflePressed = false;
+    bool repeatPressed  = false;
+
+    DrawShufRep(
+        renderer,
+        texSHUFREP,
+        shuf_src,
+        shuffleButton,
+        shuffleEnabled,
+        shufflePressed
+    );
+
+    DrawShufRep(
+        renderer,
+        texSHUFREP,
+        rep_src,
+        repeatButton,
+        repeatEnabled,
+        repeatPressed
+    );
+
 
     SDL_Rect monoRect   = {1670, 835, 30, 90};
     SDL_Rect stereoRect = {1670, 940, 30, 90};
@@ -651,14 +779,14 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
 //    drawRect(renderer, kHzInfo, 150,0,200,150);
 //    drawRect(renderer, playlistFiles, 100,100,100,150);
 
-    drawRect(renderer, prevButton, 255,0,0,150);
-    drawRect(renderer, nextButton, 0,255,0,150);
-    drawRect(renderer, playButton, 255,0,0,150);
-    drawRect(renderer, stopButton, 0,255,0,150);
-    drawRect(renderer, pauseButton, 255,0,0,150);
-    drawRect(renderer, ejectButton, 0,255,0,150);
-    drawRect(renderer, shuffleButton, 255,0,0,150);
-    drawRect(renderer, repeatButton, 0,255,0,150);
+//    drawRect(renderer, prevButton, 255,0,0,150);
+    // drawRect(renderer, nextButton, 0,255,0,150);
+    // drawRect(renderer, playButton, 255,0,0,150);
+    // drawRect(renderer, stopButton, 0,255,0,150);
+    // drawRect(renderer, pauseButton, 255,0,0,150);
+    // drawRect(renderer, ejectButton, 0,255,0,150);
+//    drawRect(renderer, shuffleButton, 255,0,0,150);
+//    drawRect(renderer, repeatButton, 0,255,0,150);
 
     drawRect(renderer, eqBand1, 0,0,255,150);
     drawRect(renderer, eqBand2, 0,255,255,150);
@@ -718,10 +846,11 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
                       0,
                       ALIGN_CENTER);
 
-    int playing = playerGetCurrentTrackIndex();
-    if (playing >= 0)
-    {
-        const Mp3MetadataEntry* md = mp3GetTrackMetadata(playing);
+int currentTrackIndex = playerGetCurrentTrackIndex();
+if (currentTrackIndex >= 0)
+{
+    const Mp3MetadataEntry* md = mp3GetTrackMetadata(currentTrackIndex);
+
         if (md)
         {
             char kbpsText[8];

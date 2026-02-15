@@ -1,17 +1,23 @@
 #pragma once
 #include <stdbool.h>
 
-struct PlayerState
-{
-    int trackIndex;          // -1 = stopped
+typedef enum {
+    REPEAT_OFF,
+    REPEAT_ALL,
+    REPEAT_ONE
+} RepeatMode;
+
+typedef struct {
+    int trackIndex;
     int elapsedSeconds;
     int durationSeconds;
-
     int sampleRate;
     int channels;
+    bool isPlaying;
+    bool isDecoding;
 
-    bool isPlaying;          // audible output
-    bool isDecoding;         // mpg123 still feeding data
-};
-
-const PlayerState* playerGetState();
+    // 🔵 NEW
+    bool isPaused;
+    bool shuffle;
+    RepeatMode repeat;
+} PlayerState;

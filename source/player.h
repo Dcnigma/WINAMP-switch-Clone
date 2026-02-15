@@ -14,6 +14,14 @@ bool playerIsPlaying();
 void playerUpdate();
 
 bool playerIsPlaying();
+bool playerIsPaused();
+
+bool playerIsShuffleEnabled();
+bool playerIsRepeatEnabled();
+
+void playerToggleShuffle();
+void playerToggleRepeat();
+
 
 #define FFT_SIZE 1024
 extern float g_fftInput[FFT_SIZE];
@@ -25,6 +33,14 @@ void playerAdjustVolume(float delta);
 
 void playerSetPan(float pan);
 float playerGetPan();
+// Playback control
+void playerTogglePause();
+void playerNext();
+void playerPrev();
+
+// Repeat / Shuffle
+void playerToggleShuffle();
+void playerCycleRepeat();
 
 //int playerGetCurrentIndex();
 int playerGetCurrentTrackIndex();

@@ -20,6 +20,8 @@ static mpg123_handle* mh = nullptr;
 
 static bool g_waitForDrain = false;
 
+static bool g_shuffleEnabled = false;
+static bool g_repeatEnabled = false;
 
 /* 🔵 WINAMP STATE */
 static PlayerState g_state = {
@@ -60,6 +62,15 @@ static void processSamples(int16_t* samples, int count)
     }
 }
 
+bool playerIsShuffleEnabled()
+{
+    return g_shuffleEnabled;
+}
+
+bool playerIsRepeatEnabled()
+{
+    return g_repeatEnabled;
+}
 
 
 /* ---------------------------------------------------- */
@@ -105,6 +116,10 @@ void playerInit()
 {
     mpg123_init();
     playerSetVolume(1.0f);
+    g_state.repeat  = REPEAT_OFF;
+    g_state.shuffle = false;
+    g_state.isPaused = false;
+
 }
 
 void playerShutdown()
@@ -119,6 +134,90 @@ void playerShutdown()
 
     mpg123_exit();
 }
+
+void playerTogglePause()
+{
+    if (!audioDev) return;
+
+    g_state.isPaused = !g_state.isPaused;
+    SDL_PauseAudioDevice(audioDev, g_state.isPaused ? 1 : 0);
+}
+
+void playerNext()
+{
+    int next;
+
+    if (g_state.repeat == REPEAT_ONE)
+    {
+        next = g_state.trackIndex;
+    }
+    else if (g_state.shuffle)
+    {
+        next = rand() % playlistGetCount();
+    }
+    else
+    {
+        next = g_state.trackIndex + 1;
+        if (next >= playlistGetCount())
+        {
+            if (g_state.repeat == REPEAT_ALL)
+                next = 0;
+            else
+                return;
+        }
+    }
+
+    playerPlay(next);
+}
+
+void playerToggleShuffle()
+{
+    g_state.shuffle = !g_state.shuffle;
+    g_shuffleEnabled = !g_shuffleEnabled;
+}
+
+void playerCycleRepeat()
+{
+    g_state.repeat = (RepeatMode)((g_state.repeat + 1) % 3);
+}
+
+bool playerIsPaused()
+{
+    return g_state.isPlaying && !g_state.isDecoding;
+}
+
+
+void playerPrev()
+{
+    // Winamp rule: if >2 sec played → restart track
+    if (g_state.elapsedSeconds > 2)
+    {
+        playerPlay(g_state.trackIndex);
+        return;
+    }
+
+    int prev = g_state.trackIndex - 1;
+
+    if (prev < 0)
+    {
+        if (g_state.repeat == REPEAT_ALL)
+            prev = playlistGetCount() - 1;
+        else
+            return;
+    }
+
+    playerPlay(prev);
+}
+
+
+
+void playerToggleRepeat()
+{
+    g_repeatEnabled = !g_repeatEnabled;
+}
+
+
+
 
 void playerPlay(int index)
 {
@@ -220,11 +319,33 @@ void playerUpdate()
         {
             g_waitForDrain = false;
 
-            int next = g_state.trackIndex + 1;
-            if (next < playlistGetCount())
-                playerPlay(next);
+            int next;
+
+            if (g_state.repeat == REPEAT_ONE)
+            {
+                next = g_state.trackIndex;
+            }
+            else if (g_state.shuffle)
+            {
+                next = rand() % playlistGetCount();
+            }
             else
-                playerStop();
+            {
+                next = g_state.trackIndex + 1;
+                if (next >= playlistGetCount())
+                {
+                    if (g_state.repeat == REPEAT_ALL)
+                        next = 0;
+                    else
+                    {
+                        playerStop();
+                        return;
+                    }
+                }
+            }
+
+            playerPlay(next);
+
 
             return;
         }
