@@ -138,21 +138,32 @@ int main()
         if (down & HidNpadButton_StickLRight)
             playerSetPan(playerGetPan() + 0.1f);
 
-
-        if (down & HidNpadButton_StickRRight)
-            playerNext();
-
-        if (down & HidNpadButton_StickRLeft)
-            playerPrev();
-
-        if (down & HidNpadButton_Y)
-            playerTogglePause();
-
         if (down & HidNpadButton_StickRUp)
             playerCycleRepeat();
 
         if (down & HidNpadButton_StickRDown)
+        {
             playerToggleShuffle();
+
+        }
+
+
+            if (down & HidNpadButton_StickRRight)
+                playerNext();
+
+            if (down & HidNpadButton_StickRLeft)
+                playerPrev();
+
+            if (down & HidNpadButton_Y)
+                playerTogglePause();
+            // // Stop with X
+            // if (down & HidNpadButton_X)
+            // {
+            //     playerStop();
+            // }
+            if (down & HidNpadButton_X)
+                playerStop();
+
 
 
 
@@ -184,6 +195,7 @@ int main()
         else if (down & HidNpadButton_B)
         {
             // Clear playlist first
+            playerStop();
             playlistClear();
             fileBrowserOpen();
         }
@@ -196,11 +208,7 @@ int main()
         }
 
 
-        // Stop with X
-        if (down & HidNpadButton_X)
-        {
-            playerStop();
-        }
+
         // Scroll playlist
         if (down & HidNpadButton_Up)   playlistScrollUp();
         if (down & HidNpadButton_Down) playlistScrollDown();

@@ -1,23 +1,23 @@
 #pragma once
-#include <stdbool.h>
 
-typedef enum {
-    REPEAT_OFF,
+enum RepeatMode {
+    REPEAT_OFF = 0,
     REPEAT_ALL,
     REPEAT_ONE
-} RepeatMode;
+};
 
-typedef struct {
+struct PlayerState {
     int trackIndex;
     int elapsedSeconds;
     int durationSeconds;
     int sampleRate;
     int channels;
-    bool isPlaying;
-    bool isDecoding;
 
-    // 🔵 NEW
-    bool isPaused;
+    bool playing;
+    bool paused;
+
     bool shuffle;
     RepeatMode repeat;
-} PlayerState;
+};
+
+extern PlayerState g_state;
