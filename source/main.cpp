@@ -15,6 +15,21 @@
 static u64 lastPlaybackActivityTick = 0;
 static bool stayAwakeActive = true;
 
+static constexpr float PREV_RESTART_THRESHOLD = 2.0f;
+
+// ----------------------------------
+// NEW: Scrub state (delta-time based)
+// ----------------------------------
+struct ScrubState
+{
+    bool active = false;
+    bool forward = false;
+    u64 startTicks = 0;
+};
+
+static ScrubState g_scrub;
+
+// ----------------------------------
 
 void updateStayAwakeLogic()
 {
@@ -27,39 +42,30 @@ void updateStayAwakeLogic()
         if (!stayAwakeActive)
         {
             appletSetIdleTimeDetectionExtension(AppletIdleTimeDetectionExtension_ExtendedUnsafe);
-            appletOverrideAutoSleepTimeAndDimmingTime(0,0,0,0);
+            appletOverrideAutoSleepTimeAndDimmingTime(0, 0, 0, 0);
             stayAwakeActive = true;
         }
     }
     else
     {
-        // 5 minutes = 5 * 60 seconds * 19.2MHz ticks
         const u64 timeout = 5ULL * 60ULL * 19200000ULL;
-
         if (stayAwakeActive && (now - lastPlaybackActivityTick) > timeout)
         {
-            // Back to normal system dim/sleep behavior
             appletSetIdleTimeDetectionExtension((AppletIdleTimeDetectionExtension)0);
             stayAwakeActive = false;
         }
-
     }
 }
 
-
 int main()
 {
-
-    // --- Initialize ---
     romfsInit();
-
-    // Prevent screen dimming / sleep while app is running
-
 
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
     TTF_Init();
     IMG_Init(IMG_INIT_PNG);
     playerInit();
+
     SDL_Window* window = SDL_CreateWindow(
         "Winamp Switch Demo",
         0, 0, FB_W, FB_H,
@@ -67,203 +73,181 @@ int main()
     );
 
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
-    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND); // important for transparency
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
-    // --- Load resources ---
     TTF_Font* font = TTF_OpenFont("romfs:/fonts/arial.ttf", 32);
-    if (!font) printf("Failed to load font!\n");
-
     TTF_Font* fontBig = TTF_OpenFont("romfs:/fonts/arial.ttf", 82);
-    if (!fontBig) printf("Failed to load BIG font!\n");
 
     SDL_Texture* skin = IMG_LoadTexture(renderer, "romfs:/skins/default_skin.png");
-    if (!skin) printf("Failed to load skin: %s\n", SDL_GetError());
-
     SDL_Texture* texProgIndicator = IMG_LoadTexture(renderer, "romfs:/skins/prgBindicator.png");
-    if (!texProgIndicator)
-    {
-        printf("Failed to load prgBindicator.png: %s\n", IMG_GetError());
-    }
-
     SDL_Texture* texVolume = IMG_LoadTexture(renderer, "romfs:/skins/VOLUME.png");
-    if (!texVolume)
-        printf("Failed to load VOLUME.png: %s\n", IMG_GetError());
-
     SDL_Texture* texPan = IMG_LoadTexture(renderer, "romfs:/skins/BALANCE.png");
-    if (!texPan)
-        printf("Failed to load BALANCE.png: %s\n", IMG_GetError());
-
     SDL_Texture* texPlaylistKnob = IMG_LoadTexture(renderer, "romfs:/skins/PlaylistKnob.png");
-    if (!texPlaylistKnob)
-        printf("Failed to load PlaylistKnob.png: %s\n", IMG_GetError());
-
     SDL_Texture* texCbuttons = IMG_LoadTexture(renderer, "romfs:/skins/CBUTTONS.png");
-    if (!texCbuttons)
-        printf("Failed to load CBUTTONS.png: %s\n", IMG_GetError());
-
     SDL_Texture* texSHUFREP = IMG_LoadTexture(renderer, "romfs:/skins/SHUFREP.png");
-    if (!texSHUFREP)
-        printf("Failed to load SHUFREP.png: %s\n", IMG_GetError());
 
-    // --- At boot ---
     playlistClear();
     mp3ClearMetadata();
-
     mp3AddToPlaylist("romfs:/song.mp3");
     playlistScroll = 0;
 
-
-    // --- Configure controller ---
     PadState pad;
-    padConfigureInput(1,
-        HidNpadStyleTag_NpadHandheld |
-        HidNpadStyleTag_NpadFullKey
-    );
+    padConfigureInput(1, HidNpadStyleTag_NpadHandheld | HidNpadStyleTag_NpadFullKey);
     padInitializeDefault(&pad);
-
-    SDL_Event e;
-    while (SDL_PollEvent(&e)) {}
-
 
     while (appletMainLoop())
     {
         padUpdate(&pad);
         u64 down = padGetButtonsDown(&pad);
+        u64 up   = padGetButtonsUp(&pad);
+        u64 now  = svcGetSystemTick();
 
         updateStayAwakeLogic();
+        // File browser open
 
-        if (down & HidNpadButton_StickLLeft)
-            playerSetPan(playerGetPan() - 0.1f);
+        if (down & HidNpadButton_Plus)
+             break;
 
-        if (down & HidNpadButton_StickLRight)
-            playerSetPan(playerGetPan() + 0.1f);
+         // File browser open
+         if (fileBrowserIsActive())
+         {
+             fileBrowserUpdate(&pad);
+         }
+         else if (down & HidNpadButton_B)
+         {
+             // Clear playlist first
+             playerStop();
+             playlistClear();
+             fileBrowserOpen();
+         }
+
+         // Play first track with A
+         if (!fileBrowserIsActive() && (down & HidNpadButton_A))
+         {
+             if (playlistGetCount() > 0)
+                 playerPlay(playlistGetCurrentIndex());
+         }
+
+
+
+         // Scroll playlist
+         if (down & HidNpadButton_Up)   playlistScrollUp();
+         if (down & HidNpadButton_Down) playlistScrollDown();
+
+         playerUpdate();
+
+
+        // ---------------------------
+        // Playback controls
+        // ---------------------------
+        if (down & HidNpadButton_A)
+            playerPlay(playlistGetCurrentIndex());
+
+        if (down & HidNpadButton_Y)
+            playerTogglePause();
+
+        if (down & HidNpadButton_X)
+            playerStop();
+
+        if (down & HidNpadButton_StickRRight)
+            playerNext();
+
+        if (down & HidNpadButton_StickRLeft)
+        {
+            if (playerGetPosition() > PREV_RESTART_THRESHOLD)
+                playerSeek(0.0f);
+            else
+                playerPrev();
+        }
 
         if (down & HidNpadButton_StickRUp)
             playerCycleRepeat();
 
         if (down & HidNpadButton_StickRDown)
-        {
             playerToggleShuffle();
 
-        }
-
-
-            if (down & HidNpadButton_StickRRight)
-                playerNext();
-
-            if (down & HidNpadButton_StickRLeft)
-                playerPrev();
-
-            if (down & HidNpadButton_Y)
-                playerTogglePause();
-            // // Stop with X
-            // if (down & HidNpadButton_X)
-            // {
-            //     playerStop();
-            // }
-            if (down & HidNpadButton_X)
-                playerStop();
-
-
-
-
         // ---------------------------
-        // Volume Control (Left Stick)
+        // NEW: Winamp-style scrubbing
         // ---------------------------
-        const float VOL_STEP = 0.05f; // 5% per press
-
-        if (down & HidNpadButton_StickLUp)
+        if (down & HidNpadButton_R)
         {
-            playerAdjustVolume(+VOL_STEP);
+            g_scrub = { true, true, now };
+        }
+        else if (down & HidNpadButton_L)
+        {
+            g_scrub = { true, false, now };
         }
 
-        if (down & HidNpadButton_StickLDown)
+        if (g_scrub.active)
         {
-            playerAdjustVolume(-VOL_STEP);
-        }
-
-        playerUpdate();
-        // Exit
-        if (down & HidNpadButton_Plus)
-            break;
-
-        // File browser open
-        if (fileBrowserIsActive())
-        {
-            fileBrowserUpdate(&pad);
-        }
-        else if (down & HidNpadButton_B)
-        {
-            // Clear playlist first
-            playerStop();
-            playlistClear();
-            fileBrowserOpen();
-        }
-
-        // Play first track with A
-        if (!fileBrowserIsActive() && (down & HidNpadButton_A))
-        {
-            if (playlistGetCount() > 0)
-                playerPlay(playlistGetCurrentIndex());
-        }
-
-
-
-        // Scroll playlist
-        if (down & HidNpadButton_Up)   playlistScrollUp();
-        if (down & HidNpadButton_Down) playlistScrollDown();
-
-        playerUpdate();
-
-        // --- Render ---
-        SDL_SetRenderDrawColor(renderer, 0,0,0,255);
-        SDL_RenderClear(renderer);
-
-
-        // --- Display currently playing song metadata ---
-        char songText[256] = "Stopped";
-
-        int playingIndex = playerGetCurrentTrackIndex();
-
-        if (playingIndex >= 0 && playingIndex < mp3GetPlaylistCount())
-        {
-            const Mp3MetadataEntry* md = mp3GetTrackMetadata(playingIndex);
-            if (md)
+            if ((up & HidNpadButton_R) || (up & HidNpadButton_L))
             {
-                // Include playlist index like OG Winamp
-                snprintf(songText, sizeof(songText),
-                         "%d. %.120s - %.120s",
-                         playingIndex + 1,                  // playlist number
-                         md->artist[0] ? md->artist : "Unknown",
-                         md->title[0]  ? md->title  : "Unknown");
+                g_scrub.active = false;
+            }
+            else
+            {
+                float heldSec = (now - g_scrub.startTicks) / 19200000.0f;
+                float step = 1.0f;
+
+                if (heldSec > 2.0f)      step = 8.0f;
+                else if (heldSec > 0.5f) step = 3.0f;
+
+                float pos = playerGetPosition();
+                pos += g_scrub.forward ? step : -step;
+                if (pos < 0.0f) pos = 0.0f;
+
+                playerSeek(pos);
             }
         }
 
+        // ---------------------------
+        // Volume & pan
+        // ---------------------------
+        if (down & HidNpadButton_StickLUp)   playerAdjustVolume(+0.05f);
+        if (down & HidNpadButton_StickLDown) playerAdjustVolume(-0.05f);
+        if (down & HidNpadButton_StickLLeft) playerSetPan(playerGetPan() - 0.1f);
+        if (down & HidNpadButton_StickLRight)playerSetPan(playerGetPan() + 0.1f);
 
-        uiRender(renderer, font, fontBig, skin, texProgIndicator, texVolume, texPan, texPlaylistKnob, texCbuttons, texSHUFREP,  songText);   // UI background
-//        uiRender(renderer, font, smallFont, texProgIndicator, currentTitle);
+        // ---------------------------
+        // Exit
+        // ---------------------------
+        if (down & HidNpadButton_Plus)
+            break;
 
-        renderPlaylist(renderer, font);            // Playlist
-        fileBrowserRender(renderer, font);         // Browser overlay
+        playerUpdate();
+
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+
+        char songText[256] = "Stopped";
+        int idx = playerGetCurrentTrackIndex();
+        if (idx >= 0)
+        {
+            const Mp3MetadataEntry* md = mp3GetTrackMetadata(idx);
+            if (md)
+                snprintf(songText, sizeof(songText), "%d. %s - %s",
+                         idx + 1,
+                         md->artist[0] ? md->artist : "Unknown",
+                         md->title[0]  ? md->title  : "Unknown");
+        }
+
+        uiRender(renderer, font, fontBig, skin,
+                 texProgIndicator, texVolume, texPan,
+                 texPlaylistKnob, texCbuttons, texSHUFREP,
+                 songText);
+
+        renderPlaylist(renderer, font);
+        fileBrowserRender(renderer, font);
 
         SDL_RenderPresent(renderer);
-        SDL_PollEvent(NULL);
     }
 
-    // --- Cleanup ---
     playerStop();
-    //playerShutdown();
-    SDL_Delay(50);
-    if (font) TTF_CloseFont(font);
-    if (skin) SDL_DestroyTexture(skin);
-    if (fontBig) TTF_CloseFont(fontBig);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
-
     IMG_Quit();
     TTF_Quit();
     SDL_Quit();
     romfsExit();
-
     return 0;
 }

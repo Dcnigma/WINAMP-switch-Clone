@@ -66,6 +66,47 @@ static void processSamples(int16_t* samples, int count)
     }
 }
 
+#include "player.h"
+#include "player_state.h"
+
+// Return current playback position in seconds
+float playerGetPosition()
+{
+    if (!g_state.playing)
+        return 0.0f;
+
+    return (float)g_state.elapsedSeconds;
+    //return gPlayerState.currentTimeSec;
+}
+
+void playerSeek(float targetSeconds)
+{
+    if (!g_state.playing || !mh || !audioDev)
+        return;
+
+    if (targetSeconds < 0.0f)
+        targetSeconds = 0.0f;
+
+    if (targetSeconds > g_state.durationSeconds)
+        targetSeconds = (float)g_state.durationSeconds;
+
+    // seconds → samples
+    off_t targetSample =
+        (off_t)(targetSeconds * g_state.sampleRate);
+
+    // Clear queued audio so we don’t hear old data
+    SDL_ClearQueuedAudio(audioDev);
+
+    // mpg123 seek (absolute sample position)
+    if (mpg123_seek(mh, targetSample, SEEK_SET) < 0)
+        return;
+
+    // Reset timing counters
+    samplesPlayed = targetSample;
+    g_state.elapsedSeconds = (int)targetSeconds;
+}
+
+
 
 bool playerIsShuffleEnabled()
 {

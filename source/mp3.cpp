@@ -29,6 +29,16 @@ void debugLog(const char* fmt, ...)
     fflush(stdout);
 }
 
+bool mp3SeekSamples(mpg123_handle* mh, off_t sampleOffset)
+{
+    if (!mh)
+        return false;
+
+    off_t res = mpg123_seek(mh, sampleOffset, SEEK_SET);
+    return res >= 0;
+}
+
+
 // Convert ID3v2 syncsafe integer to int
 static unsigned int syncsafeToInt(unsigned char* b)
 {

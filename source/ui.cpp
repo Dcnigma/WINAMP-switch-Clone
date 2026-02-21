@@ -272,6 +272,27 @@ static void drawProgressBar(SDL_Renderer* renderer,
     SDL_RenderCopy(renderer, texProgIndicator, NULL, &dst);
 }
 
+
+static void handleProgressBarSeek(int mouseX, const SDL_Rect& barRect)
+{
+    if (!playerIsPlaying())
+        return;
+
+    // Clamp mouse X/Y to bar
+    int y = mouseX; // vertical bar → we use Y, not X
+
+    if (y < barRect.y) y = barRect.y;
+    if (y > barRect.y + barRect.h) y = barRect.y + barRect.h;
+
+    float ratio =
+        (float)(y - barRect.y) / (float)barRect.h;
+
+    if (ratio < 0.0f) ratio = 0.0f;
+    if (ratio > 1.0f) ratio = 1.0f;
+
+    float targetSec = ratio * playerGetTrackLength();
+    playerSeek(targetSec);
+}
 // Draw Mono / Stereo indicators
 // Call this from uiRender()
 static void drawMonoStereo(SDL_Renderer* renderer, TTF_Font* font, const Mp3MetadataEntry* md, SDL_Rect monoRect,  SDL_Rect stereoRect)

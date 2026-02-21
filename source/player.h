@@ -8,12 +8,12 @@ extern "C" {
 void playerInit();
 void playerPlay(int index);
 void playerStop();
-void playerNext();
-void playerPrev();
+//void playerNext();
+//void playerPrev();
 bool playerIsPlaying();
 void playerUpdate();
 
-bool playerIsPlaying();
+//bool playerIsPlaying();
 bool playerIsPaused();
 
 bool playerIsShuffleEnabled();
@@ -22,6 +22,8 @@ bool playerIsRepeatEnabled();
 void playerToggleShuffle();
 void playerToggleRepeat();
 
+float playerGetPosition();   // seconds
+void  playerSeek(float sec);
 
 #define FFT_SIZE 1024
 extern float g_fftInput[FFT_SIZE];
@@ -48,8 +50,8 @@ int playerGetElapsedSeconds();
 int playerGetTrackLength();
 int playlistGetCurrentIndex();
 
-int  playerGetElapsedSeconds();
-int  playerGetTrackLength();
+//int  playerGetElapsedSeconds();
+//int  playerGetTrackLength();
 
 
 
