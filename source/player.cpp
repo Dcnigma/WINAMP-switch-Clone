@@ -28,8 +28,12 @@ static mpg123_handle* mh = nullptr;
 static bool g_waitForDrain = false;
 
 /* Forward declarations */
+/*shuffle*/
+
 static void stopPlaybackInternal();
 static void rebuildShufflePool();
+static std::vector<int> g_shufflePool;
+static std::vector<int> g_shuffleHistory;
 
 /* FFT */
 float g_fftInput[FFT_SIZE] = {0};
@@ -44,9 +48,6 @@ static float g_pan      = 0.0f;
 static float g_leftMix  = 1.0f;
 static float g_rightMix = 1.0f;
 
-/*shuffle*/
-
-static std::vector<int> g_shufflePool;
 
 
 static void rebuildShufflePool()
@@ -177,7 +178,7 @@ void playerPlay(int index)
     if (!path)
         return;
 
-    playerStop();
+    stopPlaybackInternal();
     g_waitForDrain = false;
 
     mh = mpg123_new(nullptr, nullptr);
@@ -232,28 +233,13 @@ void playerPlay(int index)
         (len > 0) ? (int)(len / rate) : 0;
 }
 
-// void playerStop()
-// {
-//     audio.stop();
-//     audio.shutdown();
-//
-//     if (mh) {
-//         mpg123_close(mh);
-//         mpg123_delete(mh);
-//         mh = nullptr;
-//     }
-//     spectrumReset();
-//     memset(&g_state, 0, sizeof(g_state));
-//     g_state.trackIndex = -1;
-//
-//     samplesPlayed = 0;
-//     g_waitForDrain = false;
-// }
-
 void playerStop()
 {
     stopPlaybackInternal();
     spectrumReset();
+
+    g_shuffleHistory.clear();
+    g_shufflePool.clear();
 
     g_state.playing = false;
     g_state.paused  = false;
@@ -281,8 +267,8 @@ void playerToggleShuffle()
     if (g_state.shuffle)
     {
         rebuildShufflePool();
+        g_shuffleHistory.clear();
 
-        // Remove current track from pool so it doesn't repeat
         auto it = std::find(
             g_shufflePool.begin(),
             g_shufflePool.end(),
@@ -294,6 +280,7 @@ void playerToggleShuffle()
     else
     {
         g_shufflePool.clear();
+        g_shuffleHistory.clear();
     }
 }
 
@@ -364,6 +351,11 @@ void playerNext()
     if (count == 0)
         return;
 
+    if (g_state.shuffle && g_state.trackIndex >= 0)
+    {
+        g_shuffleHistory.push_back(g_state.trackIndex);
+    }
+
     int next = g_state.trackIndex;
 
     if (g_state.repeat == REPEAT_ONE)
@@ -380,7 +372,7 @@ void playerNext()
             }
             else
             {
-                g_state.shuffle = false;
+                stopPlaybackInternal();
                 return;
             }
         }
@@ -403,31 +395,39 @@ void playerNext()
             }
         }
     }
+    printf("HISTORY: ");
+    for (int i : g_shuffleHistory)
+        printf("%d ", i);
+    printf("\n");
 
     playerPlay(next);
 }
 
-
 void playerPrev()
 {
-    int count = playlistGetCount();
-    if (count == 0)
-        return;
-
-    // Winamp rule: restart if >2s
-    if (g_state.elapsedSeconds > 2) {
-        playerPlay(g_state.trackIndex);
+    if (g_state.shuffle)
+    {
+        if (!g_shuffleHistory.empty())
+        {
+            int prev = g_shuffleHistory.back();
+            g_shuffleHistory.pop_back();
+            playerPlay(prev);
+        }
+        else
+        {
+            // Restart current track
+            playerPlay(g_state.trackIndex);
+        }
         return;
     }
 
     int prev = g_state.trackIndex - 1;
-    if (prev < 0) {
-        if (g_state.repeat == REPEAT_ALL)
-            prev = count - 1;
-        else
-            return;
-    }
-
+    if (prev < 0)
+        prev = playlistGetCount() - 1;
+    printf("HISTORY: ");
+    for (int i : g_shuffleHistory)
+        printf("%d ", i);
+    printf("\n");
     playerPlay(prev);
 }
 

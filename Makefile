@@ -10,6 +10,15 @@ TOPDIR ?= $(CURDIR)
 include $(DEVKITPRO)/libnx/switch_rules
 
 #---------------------------------------------------------------------------------
+# App Info
+#---------------------------------------------------------------------------------
+APP_TITLE       := SwitchAMP
+APP_DESCRIPTION := SwitchAMP based on Winamp
+APP_AUTHOR      := DcNiGma
+APP_VERSION     := 1.0.0
+ICON            := logo.png
+
+#---------------------------------------------------------------------------------
 # TARGET is the name of the output
 # BUILD is the directory where object files & intermediate files will be placed
 # SOURCES is a list of directories containing source code
