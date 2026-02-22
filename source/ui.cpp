@@ -21,12 +21,21 @@ static kiss_fftr_cfg fftCfg = NULL;
 static kiss_fft_cpx fftOut[FFT_SIZE/2];
 static float fftMag[FFT_SIZE/2];
 static float bandValues[SPECTRUM_BARS];
+static float bandSmooth[SPECTRUM_BARS] = {0.0f};
 
 static int  scrollOffset = 0;
 static int  scrollTimer  = 0;
 static int  scrollPause  = 0;
 static bool scrollForward = true;
 static char lastSongText[256] = {0};
+
+static bool uiPrevPressed  = false;
+static bool uiNextPressed  = false;
+static bool uiPlayPressed  = false;
+static bool uiPausePressed = false;
+static int  uiPressTimer   = 0;
+
+static const int UI_PRESS_FRAMES = 6; // ~100ms at 60fps
 
 //static int spectrumValues[SPECTRUM_BARS] = {0};
 static float spectrumPeaks[SPECTRUM_BARS]  = {0}; // use float for smooth decay
@@ -92,6 +101,18 @@ SDL_Rect shuf_src[] = {
 };
 
 
+void uiNotifyButtonPress(UIButton btn)
+{
+    uiPressTimer = UI_PRESS_FRAMES;
+
+    switch (btn)
+    {
+        case UI_BTN_PLAY:  uiPlayPressed  = true; break;
+        case UI_BTN_PAUSE: uiPausePressed = true; break;
+        case UI_BTN_NEXT:  uiNextPressed  = true; break;
+        case UI_BTN_PREV:  uiPrevPressed  = true; break;
+    }
+}
 
 void DrawCButton(
     SDL_Renderer* renderer,
@@ -236,6 +257,17 @@ static void drawVolumeBar(SDL_Renderer* renderer,
 }
 
 
+void spectrumReset()
+{
+    memset(g_fftInput, 0, sizeof(g_fftInput));
+  //  fftWritePos = 0;
+
+    for (int i = 0; i < SPECTRUM_BARS; i++)
+    {
+        bandSmooth[i] = 0.0f;
+        spectrumPeaks[i] = 0.0f;
+    }
+}
 
 static void drawProgressBar(SDL_Renderer* renderer,
                             SDL_Texture* texProgIndicator,
@@ -341,9 +373,6 @@ static void drawMonoStereo(SDL_Renderer* renderer, TTF_Font* font, const Mp3Meta
     drawVerticalText(renderer, font, "Stereo", stereoRect, stereoColor);
 }
 
-
-
-
 void uiInitFFT()
 {
     if (!fftCfg)
@@ -351,7 +380,6 @@ void uiInitFFT()
 }
 
 static bool fftInitialized = false;
-
 
 static void computeSpectrum()
 {
@@ -366,25 +394,29 @@ static void computeSpectrum()
 
     int binsPerBand = (FFT_SIZE/2) / SPECTRUM_BARS;
 
-    for (int b = 0; b < SPECTRUM_BARS; b++)
-    {
-        float sum = 0;
-        for (int j = 0; j < binsPerBand; j++)
-        {
-            sum += fftMag[b * binsPerBand + j];
-        }
+const float SMOOTHING = 0.25f; // 0.1 = very smooth, 0.4 = snappy
 
-        float avg = sum / binsPerBand;
+for (int b = 0; b < SPECTRUM_BARS; b++)
+{
+    float sum = 0.0f;
+    for (int j = 0; j < binsPerBand; j++)
+        sum += fftMag[b * binsPerBand + j];
 
-        /* Convert to log scale (more natural for audio) */
-        avg = log10f(avg + 1.0f) * 0.6f;   // tweak 0.6 to taste
+    float avg = sum / binsPerBand;
 
-        if (avg > 1.0f) avg = 1.0f;
-        if (avg < 0.0f) avg = 0.0f;
+    avg = log10f(avg + 1.0f) * 0.6f;
 
-        bandValues[b] = avg;
+    if (avg > 1.0f) avg = 1.0f;
+    if (avg < 0.0f) avg = 0.0f;
 
-    }
+    // 🔥 SMOOTHING
+    bandSmooth[b] += (avg - bandSmooth[b]) * SMOOTHING;
+
+    bandValues[b] = bandSmooth[b];
+    float bassBoost = 1.0f + (float)(SPECTRUM_BARS - b) / SPECTRUM_BARS;
+    avg *= bassBoost * 0.9f;
+}
+
 }
 
 // Call this in uiRender()
@@ -666,6 +698,17 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
       fftInitialized = true;
   }
 
+  if (uiPressTimer > 0)
+  {
+      uiPressTimer--;
+      if (uiPressTimer == 0)
+      {
+          uiPrevPressed  = false;
+          uiNextPressed  = false;
+          uiPlayPressed  = false;
+          uiPausePressed = false;
+      }
+  }
     // --- Live playtime string ---
     char liveTime[16];
     int elapsed = playerGetElapsedSeconds();
@@ -711,13 +754,12 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     bool isPlaying = playerIsPlaying();
     bool isPaused  = playerIsPaused();   // add this getter if missing
 
-    DrawCButton(renderer, texCbuttons, BTN_PREV,  prevButton,  false);
-    DrawCButton(renderer, texCbuttons, BTN_PLAY,  playButton,  isPlaying && !isPaused);
-    DrawCButton(renderer, texCbuttons, BTN_PAUSE, pauseButton, isPaused);
+    DrawCButton(renderer, texCbuttons, BTN_PREV,  prevButton,  uiPrevPressed);
+    DrawCButton(renderer, texCbuttons, BTN_PLAY,  playButton,  uiPlayPressed || (isPlaying && !isPaused));
+    DrawCButton(renderer, texCbuttons, BTN_PAUSE, pauseButton, uiPausePressed || isPaused);
     DrawCButton(renderer, texCbuttons, BTN_STOP,  stopButton,  false);
-    DrawCButton(renderer, texCbuttons, BTN_NEXT,  nextButton,  false);
+    DrawCButton(renderer, texCbuttons, BTN_NEXT,  nextButton,  uiNextPressed);
     DrawCButton(renderer, texCbuttons, BTN_EJECT, ejectButton, false);
-
 
     // --- Shuffle / Repeat ---
     bool shuffleEnabled = playerIsShuffleEnabled();

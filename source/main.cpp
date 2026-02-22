@@ -15,8 +15,6 @@
 static u64 lastPlaybackActivityTick = 0;
 static bool stayAwakeActive = true;
 
-static constexpr float PREV_RESTART_THRESHOLD = 2.0f;
-
 // ----------------------------------
 // NEW: Scrub state (delta-time based)
 // ----------------------------------
@@ -141,19 +139,34 @@ int main()
         // Playback controls
         // ---------------------------
         if (down & HidNpadButton_A)
-            playerPlay(playlistGetCurrentIndex());
+        {
+            uiNotifyButtonPress(UI_BTN_PLAY);
+
+            if (playerIsPaused())
+                playerTogglePause();
+            else
+                playerPlay(playlistGetCurrentIndex());
+        }
 
         if (down & HidNpadButton_Y)
+        {
+            uiNotifyButtonPress(UI_BTN_PAUSE);
             playerTogglePause();
+        }
 
         if (down & HidNpadButton_X)
             playerStop();
 
         if (down & HidNpadButton_StickRRight)
+        {
+            uiNotifyButtonPress(UI_BTN_NEXT);
             playerNext();
+        }
 
         if (down & HidNpadButton_StickRLeft)
         {
+            uiNotifyButtonPress(UI_BTN_PREV);
+
             if (playerGetPosition() > PREV_RESTART_THRESHOLD)
                 playerSeek(0.0f);
             else

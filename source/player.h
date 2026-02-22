@@ -25,6 +25,9 @@ void playerToggleRepeat();
 float playerGetPosition();   // seconds
 void  playerSeek(float sec);
 
+
+#define PREV_RESTART_THRESHOLD 3.0f
+
 #define FFT_SIZE 1024
 extern float g_fftInput[FFT_SIZE];
 
