@@ -12,8 +12,8 @@ include $(DEVKITPRO)/libnx/switch_rules
 #---------------------------------------------------------------------------------
 # App Info
 #---------------------------------------------------------------------------------
-APP_TITLE       := SwitchAMP
-APP_DESCRIPTION := SwitchAMP based on Winamp
+APP_TITLE       := WinAMP
+APP_DESCRIPTION := A love letter to Winamp!
 APP_AUTHOR      := DcNiGma
 APP_VERSION     := 1.0.0
 ICON            := logo.png
