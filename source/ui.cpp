@@ -84,12 +84,13 @@ enum ShufRepVisual {
     SR_PRESSED_ON
 };
 
+
 // Repeat button sprites (47x85)
 SDL_Rect rep_src[] = {
-    {209,  2, 47, 85},  // default off
-    {162,  2, 47, 85},  // pressed off
-    {115,  2, 47, 85},  // default on
-    { 68,  2, 47, 85}   // pressed on
+    {209,  2, 47, 85},  // REPEAT_OFF ()
+    {162,  2, 47, 85},  // REPEAT_OFF (pressed)
+    {115,  2, 47, 85},  // REPEAT_ALL (default on)
+    { 68,  2, 47, 85}   // REPEAT_ONE (pressed on)
 };
 
 // Shuffle button sprites (47x138)
@@ -126,7 +127,7 @@ void DrawCButton(
 }
 
 
-static void DrawShufRep(
+static void DrawShuf(
     SDL_Renderer* renderer,
     SDL_Texture* tex,
     const SDL_Rect* srcTable,
@@ -135,15 +136,34 @@ static void DrawShufRep(
     bool pressed
 )
 {
-    ShufRepVisual v;
+    int index;
 
-    if (enabled && pressed)      v = SR_PRESSED_ON;
-    else if (enabled)            v = SR_DEFAULT_ON;
-    else if (pressed)            v = SR_PRESSED_OFF;
-    else                         v = SR_DEFAULT_OFF;
+    if (enabled && pressed)      index = 3; // pressed on
+    else if (enabled)            index = 2; // default on
+    else if (pressed)            index = 1; // pressed off
+    else                         index = 0; // default off
 
-    SDL_RenderCopy(renderer, tex, &srcTable[v], &dst);
+    SDL_RenderCopy(renderer, tex, &srcTable[index], &dst);
 }
+
+static void DrawRepeat(
+    SDL_Renderer* renderer,
+    SDL_Texture* tex,
+    const SDL_Rect* srcTable,
+    const SDL_Rect& dst
+)
+
+{
+    RepeatMode mode = g_state.repeat;
+
+    // Safety clamp
+    if (mode < REPEAT_OFF || mode > REPEAT_ONE)
+        mode = REPEAT_OFF;
+
+    SDL_RenderCopy(renderer, tex, &srcTable[mode], &dst);
+}
+
+
 
 
 
@@ -769,7 +789,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     bool shufflePressed = false;
     bool repeatPressed  = false;
 
-    DrawShufRep(
+    DrawShuf(
         renderer,
         texSHUFREP,
         shuf_src,
@@ -777,16 +797,21 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
         shuffleEnabled,
         shufflePressed
     );
-
-    DrawShufRep(
+    //
+    // DrawRepeat(
+    //     renderer,
+    //     texSHUFREP,
+    //     rep_src,
+    //     repeatButton,
+    //     repeatEnabled,
+    //     repeatPressed
+    // );
+    DrawRepeat(
         renderer,
         texSHUFREP,
         rep_src,
-        repeatButton,
-        repeatEnabled,
-        repeatPressed
+        repeatButton
     );
-
 
     SDL_Rect monoRect   = {1670, 835, 30, 90};
     SDL_Rect stereoRect = {1670, 940, 30, 90};

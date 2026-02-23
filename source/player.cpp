@@ -299,6 +299,10 @@ static void stopPlaybackInternal()
     g_waitForDrain = false;
 }
 
+RepeatMode playerGetRepeatMode()
+{
+    return g_state.repeat;
+}
 
 bool playerIsRepeatEnabled()
 {
@@ -309,8 +313,15 @@ bool playerIsRepeatEnabled()
 
 void playerCycleRepeat()
 {
-    g_state.repeat = (RepeatMode)((g_state.repeat + 1) % 3);
+    switch (g_state.repeat)
+    {
+        case REPEAT_OFF: g_state.repeat = REPEAT_ALL; break;
+        case REPEAT_ALL: g_state.repeat = REPEAT_ONE; break;
+        case REPEAT_ONE: g_state.repeat = REPEAT_OFF; break;
+    }
 }
+
+
 
 float playerGetPosition()
 {
@@ -351,24 +362,34 @@ void playerNext()
     if (count == 0)
         return;
 
-    if (g_state.shuffle && g_state.trackIndex >= 0)
+    // 🔁 REPEAT ONE → immediately restart same track
+    if (g_state.repeat == REPEAT_ONE && g_state.trackIndex >= 0)
     {
-        g_shuffleHistory.push_back(g_state.trackIndex);
+        playerPlay(g_state.trackIndex);
+        return;
     }
 
     int next = g_state.trackIndex;
 
-    if (g_state.repeat == REPEAT_ONE)
+    if (g_state.shuffle)
     {
-        // replay same track
-    }
-    else if (g_state.shuffle)
-    {
+        if (g_state.trackIndex >= 0)
+            g_shuffleHistory.push_back(g_state.trackIndex);
+
         if (g_shufflePool.empty())
         {
             if (g_state.repeat == REPEAT_ALL)
             {
                 rebuildShufflePool();
+
+                // Prevent immediate repeat of current track
+                auto it = std::find(
+                    g_shufflePool.begin(),
+                    g_shufflePool.end(),
+                    g_state.trackIndex
+                );
+                if (it != g_shufflePool.end())
+                    g_shufflePool.erase(it);
             }
             else
             {
@@ -389,7 +410,6 @@ void playerNext()
                 next = 0;
             else
             {
-                //playerStop();
                 stopPlaybackInternal();
                 return;
             }
@@ -399,7 +419,6 @@ void playerNext()
     for (int i : g_shuffleHistory)
         printf("%d ", i);
     printf("\n");
-
     playerPlay(next);
 }
 

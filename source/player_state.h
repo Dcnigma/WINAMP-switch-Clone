@@ -1,7 +1,8 @@
 #pragma once
 
 enum RepeatMode {
-    REPEAT_OFF = 0,
+    REPEAT_OFF,
+    REPEAT_OFF_PRESS,
     REPEAT_ALL,
     REPEAT_ONE
 };

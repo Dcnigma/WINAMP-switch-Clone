@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 
+#include "player_state.h"
 
 void playerInit();
 void playerPlay(int index);
@@ -46,6 +47,7 @@ void playerPrev();
 // Repeat / Shuffle
 void playerToggleShuffle();
 void playerCycleRepeat();
+RepeatMode playerGetRepeatMode();
 
 //int playerGetCurrentIndex();
 int playerGetCurrentTrackIndex();
