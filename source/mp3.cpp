@@ -6,12 +6,129 @@
 #include <sys/stat.h>
 #include "player.h"
 #include <mpg123.h>
+#include <vector>
+#include <string>
+#include <cstring>
+#include <stdarg.h>
 
-static std::vector<Mp3MetadataEntry> playlistMetadata;
+static std::vector<RuntimeMetadata> playlistMetadata;
 
+static Thread g_mp3Thread;
+static bool   g_mp3ThreadRunning = false;
 
+static Mutex  g_metaMutex;
+static Mutex  g_scanMutex;   // ← MUST be here
+
+// mutexLock(&g_metaMutex);
+// playlistMetadata[index] = entry;
+// mutexUnlock(&g_metaMutex);
+
+static bool mp3CacheValid(const Mp3CacheEntry& entry);
+static char g_loadedFolder[512] = {0};
+
+// ---- Forward declarations ----
+static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry);
+static void readID3v1Fallback(const char* path, Mp3MetadataEntry& entry);
+static void readMp3BitrateAndRate(const char* path,
+                                  int& outBitrateKbps,
+                                  int& outSampleRateKHz,
+                                  int& outChannels);
+int getMp3DurationSeconds(const char* path, int& bitrateKbps, int id3TagBytes);
+void mp3AppendCache(const char* path, const Mp3MetadataEntry& meta);
 
 /* ---------- Helpers ---------- */
+
+
+bool mp3IsFolderLoaded(const char* path)
+{
+    return path && strcmp(g_loadedFolder, path) == 0;
+}
+
+void mp3SetLoadedFolder(const char* path)
+{
+    if (!path) return;
+
+    strncpy(g_loadedFolder, path, sizeof(g_loadedFolder) - 1);
+    g_loadedFolder[sizeof(g_loadedFolder) - 1] = '\0';
+}
+
+
+struct ScanJob {
+    std::string path;
+    int index;
+};
+
+static std::vector<ScanJob> g_scanQueue;
+
+static void ensureCacheDir()
+{
+    mkdir("sdmc:/config", 0777);
+    mkdir("sdmc:/config/winamp", 0777);
+}
+
+static bool playlistHasPath(const char* path)
+{
+    for (auto& m : playlistMetadata)
+    {
+        if (strcmp(m.path, path) == 0)
+            return true;
+    }
+    return false;
+}
+
+void mp3LoadCache(const char* folderKey)
+{
+    ensureCacheDir();
+
+    FILE* f = fopen("sdmc:/config/winamp/mp3_cache.bin", "rb");
+    if (!f) return;
+
+    Mp3CacheHeader h{};
+    if (fread(&h, sizeof(h), 1, f) != 1 ||
+        h.magic != 0x4D503343 ||
+        h.version != MP3_CACHE_VERSION)
+    {
+        // incompatible or corrupt cache → ignore
+        fclose(f);
+        return;
+    }
+
+    Mp3CacheEntry entry;
+    while (fread(&entry, sizeof(entry), 1, f) == 1)
+    {
+        // 🚫 Never load romfs entries
+        if (strncmp(entry.path, "romfs:/", 7) == 0)
+            continue;
+
+        // ✅ Per-folder cache filtering
+        if (strncmp(entry.path, folderKey, strlen(folderKey)) != 0)
+            continue;
+
+        if (!mp3CacheValid(entry))
+            continue;
+
+        playlistAdd(entry.path);
+
+        RuntimeMetadata r{};
+        strncpy(r.path, entry.path, sizeof(r.path) - 1);
+        r.path[sizeof(r.path) - 1] = '\0';
+        r.meta = entry.meta;
+
+        playlistMetadata.push_back(r);
+    }
+
+    fclose(f);
+}
+
+void mp3StopBackgroundScanner()
+{
+    if (!g_mp3ThreadRunning)
+        return;
+
+    g_mp3ThreadRunning = false;
+    threadWaitForExit(&g_mp3Thread);
+    threadClose(&g_mp3Thread);
+}
 
 void debugLog(const char* fmt, ...)
 {
@@ -27,6 +144,77 @@ void debugLog(const char* fmt, ...)
     vprintf(fmt, args);
     va_end(args);
     fflush(stdout);
+}
+
+static void mp3ScanThread(void*)
+{
+    while (g_mp3ThreadRunning)
+    {
+        ScanJob job;
+
+        mutexLock(&g_scanMutex);
+        if (g_scanQueue.empty())
+        {
+            mutexUnlock(&g_scanMutex);
+            svcSleepThread(50'000'000);
+            continue;
+        }
+
+        job = g_scanQueue.front();
+        g_scanQueue.erase(g_scanQueue.begin());
+        mutexUnlock(&g_scanMutex);
+
+        Mp3MetadataEntry entry{};
+        readMp3Metadata(job.path.c_str(), entry);
+        readID3v1Fallback(job.path.c_str(), entry);
+        readMp3BitrateAndRate(
+            job.path.c_str(),
+            entry.bitrateKbps,
+            entry.sampleRateKHz,
+            entry.channels
+        );
+
+        entry.durationSeconds =
+            getMp3DurationSeconds(
+                job.path.c_str(),
+                entry.bitrateKbps,
+                entry.id3TagBytes
+            );
+
+        mutexLock(&g_metaMutex);
+        if (job.index >= 0 && job.index < (int)playlistMetadata.size())
+            playlistMetadata[job.index].meta = entry;
+        mutexUnlock(&g_metaMutex);
+
+        mp3AppendCache(job.path.c_str(), entry);
+        debugLog("[SCAN] Processing %s (index=%d)\n",
+         job.path.c_str(), job.index);
+    }
+}
+
+void mp3StartBackgroundScanner()
+{
+    mutexInit(&g_metaMutex);
+    mutexInit(&g_scanMutex);
+
+    g_mp3ThreadRunning = true;
+    threadCreate(&g_mp3Thread,
+                 mp3ScanThread,
+                 nullptr,
+                 nullptr,
+                 0x4000,
+                 0x2B,
+                 -2);
+    threadStart(&g_mp3Thread);
+}
+
+bool mp3CacheValid(const Mp3CacheEntry& entry)
+{
+    struct stat st;
+    if (stat(entry.path, &st) != 0)
+        return false;
+
+    return st.st_mtime == entry.mtime;
 }
 
 bool mp3SeekSamples(mpg123_handle* mh, off_t sampleOffset)
@@ -162,8 +350,8 @@ static void readID3v1Fallback(const char* path, Mp3MetadataEntry& entry)
 // Read ID3v2 metadata from MP3
 static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
 {
-    entry.id3TagBytes = 0;
     memset(&entry, 0, sizeof(entry));
+    entry.id3TagBytes = 0;
 
     FILE* f = fopen(path, "rb");
     if (!f) return;
@@ -249,11 +437,13 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
 }
 
 
+
 // --- Read bitrate & sample rate from first MPEG frame ---
 static int readBigEndian32(unsigned char* b)
 {
     return (b[0]<<24)|(b[1]<<16)|(b[2]<<8)|b[3];
 }
+
 
 static void readMp3BitrateAndRate(const char* path,
                                   int& outBitrateKbps,
@@ -481,39 +671,83 @@ void mp3ClearMetadata()
     playlistMetadata.clear();
 }
 
+
 bool mp3AddToPlaylist(const char* path)
 {
     if (!path) return false;
 
-    playlistAdd(path);
-
-    Mp3MetadataEntry entry;
-    readMp3Metadata(path, entry);
-    readID3v1Fallback(path, entry);
-
-    // read bitrate & sample rate (zero if unknown)
-    readMp3BitrateAndRate(path, entry.bitrateKbps, entry.sampleRateKHz, entry.channels);
-
-
-    // duration using actual bitrate (works for CBR, approximate for VBR)
-
-    // after readMp3BitrateAndRate(...)
-    entry.durationSeconds = getMp3DurationSeconds(path, entry.bitrateKbps, entry.id3TagBytes);
-
-    // 🔍 If duration looks suspicious, force accurate scan
-    if (entry.durationSeconds < 5 || entry.durationSeconds > 3600)
+    if (playlistHasPath(path))
     {
-//        entry.durationSeconds = getMp3DurationSeconds(path, 0); // forces mpg123 scan
-        int tempBitrate = 0;
-        entry.durationSeconds = getMp3DurationSeconds(path, tempBitrate, entry.id3TagBytes);
-        entry.bitrateKbps = tempBitrate;
-
+        return false; // already added
     }
 
+    int index = playlistGetCount();
+    playlistAdd(path);
 
-    playlistMetadata.push_back(entry);
+    Mp3MetadataEntry meta{};
+    strcpy(meta.title, "Scanning...");
+    bool fromCache = false;
+
+    RuntimeMetadata r{};
+    strncpy(r.path, path, sizeof(r.path) - 1);
+    r.path[sizeof(r.path) - 1] = '\0';
+    r.meta = meta;
+    playlistMetadata.push_back(r);
+
+    // Only skip ROMFS, ALWAYS scan SD files
+    if (!fromCache && strncmp(path, "romfs:/", 7) != 0)
+    {
+        mutexLock(&g_scanMutex);
+        g_scanQueue.push_back({ path, index });
+        mutexUnlock(&g_scanMutex);
+    }
+
     return true;
 }
+
+void mp3AppendCache(const char* path, const Mp3MetadataEntry& meta)
+{
+    if (strncmp(path, "romfs:/", 7) == 0)
+        return;
+
+    ensureCacheDir();
+
+    bool writeHeader = false;
+    FILE* f = fopen("sdmc:/config/winamp/mp3_cache.bin", "rb");
+    if (!f)
+    {
+        writeHeader = true; // file does not exist yet
+    }
+    else
+    {
+        fclose(f);
+    }
+
+    f = fopen("sdmc:/config/winamp/mp3_cache.bin", "ab");
+    if (!f) return;
+
+    if (writeHeader)
+    {
+        Mp3CacheHeader h{};
+        h.magic = 0x4D503343; // 'MP3C'
+        h.version = MP3_CACHE_VERSION;
+        fwrite(&h, sizeof(h), 1, f);
+    }
+
+    Mp3CacheEntry entry{};
+    strncpy(entry.path, path, sizeof(entry.path) - 1);
+
+    struct stat st;
+    if (stat(path, &st) == 0)
+        entry.mtime = st.st_mtime;
+
+    entry.meta = meta;
+
+    fwrite(&entry, sizeof(entry), 1, f);
+    fclose(f);
+}
+
+
 
 void mp3ReloadAllMetadata()
 {
@@ -543,7 +777,10 @@ void mp3ReloadAllMetadata()
         }
 
 
-        playlistMetadata.push_back(entry);
+        RuntimeMetadata r{};
+        strncpy(r.path, path, sizeof(r.path) - 1);
+        r.meta = entry;
+        playlistMetadata.push_back(r);
     }
 }
 
@@ -552,7 +789,7 @@ const Mp3MetadataEntry* mp3GetTrackMetadata(int index)
     if (index < 0) return nullptr;
     if (index >= (int)playlistMetadata.size()) return nullptr;
     if (index >= playlistGetCount()) return nullptr;
-    return &playlistMetadata[index];
+    return &playlistMetadata[index].meta;
 }
 
 
@@ -584,7 +821,10 @@ bool mp3Load(const char* path)
 
 
     playlistAdd(path);
-    playlistMetadata.push_back(entry);
+    RuntimeMetadata r{};
+    strncpy(r.path, path, sizeof(r.path) - 1);
+    r.meta = entry;
+    playlistMetadata.push_back(r);
     debugLog("\n=== MP3 LOADED ===\n");
     debugLog("File: %s\n", path);
     debugLog("Title: %s\n", entry.title);

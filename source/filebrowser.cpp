@@ -83,6 +83,13 @@ static void scanDirectory(const char* path)
 /* ---------- Import ---------- */
 static void importFolder(const char* path)
 {
+    if (mp3IsFolderLoaded(path))
+    {
+        debugLog("[MP3] Folder already loaded: %s\n", path);
+        return;
+    }
+
+    mp3SetLoadedFolder(path);
     DIR* dir = opendir(path);
     if (!dir) return;
 
@@ -98,9 +105,15 @@ static void importFolder(const char* path)
 
     std::sort(mp3Files.begin(), mp3Files.end());
 
-    // ensure clean state before bulk add
-    playlistClear();
+    mp3StopBackgroundScanner();
     mp3ClearMetadata();
+    playlistClear();
+
+    char folderKey[512];
+    snprintf(folderKey, sizeof(folderKey), "%s/", path);
+
+    mp3LoadCache(folderKey);
+    mp3StartBackgroundScanner();
 
     playlistScroll = 0;
 
@@ -110,16 +123,16 @@ static void importFolder(const char* path)
         if (fullPath.length() >= FB_PATH_LEN)
             fullPath.resize(FB_PATH_LEN - 1);
 
-        mp3Load(fullPath.c_str()); // adds BOTH path and metadata
+        mp3AddToPlaylist(fullPath.c_str());
     }
-    
+
 }
 
 
 
 static void importFile(const char* path)
 {
-    mp3Load(path); // add metadata to playlist
+    mp3AddToPlaylist(path);
 }
 
 /* ---------- Public API ---------- */
@@ -127,12 +140,10 @@ static void importFile(const char* path)
 void fileBrowserOpen()
 {
     playlistClear();
-    mp3ClearMetadata();
     scanDirectory("sdmc:/");
     playlistScroll = 0;
     active = true;
-    openCooldown = 10; // frames
-
+    openCooldown = 10;
 }
 
 bool fileBrowserIsActive()

@@ -55,10 +55,12 @@ void updateStayAwakeLogic()
     }
 }
 
+
+
 int main()
 {
     romfsInit();
-
+    mp3StartBackgroundScanner();
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
     TTF_Init();
     IMG_Init(IMG_INIT_PNG);
@@ -85,7 +87,6 @@ int main()
     SDL_Texture* texSHUFREP = IMG_LoadTexture(renderer, "romfs:/skins/SHUFREP.png");
 
     playlistClear();
-    mp3ClearMetadata();
     mp3AddToPlaylist("romfs:/song.mp3");
     playlistScroll = 0;
 
@@ -255,12 +256,14 @@ int main()
         SDL_RenderPresent(renderer);
     }
 
+    mp3StopBackgroundScanner();  // MUST be first
     playerStop();
+
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+
     IMG_Quit();
     TTF_Quit();
     SDL_Quit();
     romfsExit();
-    return 0;
 }
