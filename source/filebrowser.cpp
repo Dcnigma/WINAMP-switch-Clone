@@ -108,6 +108,8 @@ static void importFolder(const char* path)
     mp3StopBackgroundScanner();
     mp3ClearMetadata();
     playlistClear();
+    mp3CancelAllScans();
+    mp3ClearMetadata();
 
     char folderKey[512];
     snprintf(folderKey, sizeof(folderKey), "%s/", path);
@@ -140,6 +142,8 @@ static void importFile(const char* path)
 void fileBrowserOpen()
 {
     playlistClear();
+    mp3CancelAllScans();
+    mp3ClearMetadata();    
     scanDirectory("sdmc:/");
     playlistScroll = 0;
     active = true;

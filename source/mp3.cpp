@@ -12,7 +12,8 @@
 #include <stdarg.h>
 #include <unordered_set>
 #include <string>
-
+#include <unordered_map>
+#include <unistd.h>
 
 static Thread g_mp3Thread;
 static bool   g_mp3ThreadRunning = false;
@@ -23,11 +24,17 @@ static Mutex  g_scanMutex;
 static bool mp3CacheValid(const Mp3CacheEntry& entry);
 static char g_loadedFolder[512] = {0};
 
-static std::vector<Mp3CacheEntry> g_mp3Cache;
+//static std::vector<Mp3CacheEntry> g_mp3Cache;
+static std::unordered_map<std::string, Mp3CacheEntry> g_mp3Cache;
 static bool g_cacheLoaded = false;
+
 static std::unordered_set<std::string> g_scanQueuedPaths;
 
 static std::vector<RuntimeMetadata> playlistMetadata;
+static int g_scanGeneration = 0;
+
+static const char* MP3_CACHE_PATH     = "sdmc:/config/winamp/mp3_cache.bin";
+static const char* MP3_CACHE_TMP_PATH = "sdmc:/config/winamp/mp3_cache.bin.tmp";
 
 static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry);
 static void readID3v1Fallback(const char* path, Mp3MetadataEntry& entry);
@@ -56,6 +63,7 @@ void mp3SetLoadedFolder(const char* path)
 struct ScanJob {
     std::string path;
     int index;
+    int generation;
 };
 
 static std::vector<ScanJob> g_scanQueue;
@@ -78,68 +86,39 @@ static bool playlistHasPath(const char* path)
 
 void mp3LoadCache(const char* folderKey)
 {
+    if (g_cacheLoaded)
+        return;
 
-      if (!g_cacheLoaded)
-    {
-        g_mp3Cache.clear();
-
-        FILE* f = fopen("sdmc:/config/winamp/mp3_cache.bin", "rb");
-        if (f)
-        {
-            Mp3CacheHeader h{};
-            if (fread(&h, sizeof(h), 1, f) == 1 &&
-                h.magic == 0x4D503343 &&
-                h.version == MP3_CACHE_VERSION)
-            {
-                Mp3CacheEntry e;
-                while (fread(&e, sizeof(e), 1, f) == 1)
-                    g_mp3Cache.push_back(e);
-            }
-            fclose(f);
-        }
-
-        g_cacheLoaded = true;
-    }
     ensureCacheDir();
 
     FILE* f = fopen("sdmc:/config/winamp/mp3_cache.bin", "rb");
-    if (!f) return;
+    if (!f)
+    {
+        g_cacheLoaded = true;
+        return;
+    }
 
     Mp3CacheHeader h{};
     if (fread(&h, sizeof(h), 1, f) != 1 ||
         h.magic != 0x4D503343 ||
         h.version != MP3_CACHE_VERSION)
     {
-        // incompatible or corrupt cache → ignore
         fclose(f);
+        g_cacheLoaded = true;
         return;
     }
 
-    Mp3CacheEntry entry;
-    while (fread(&entry, sizeof(entry), 1, f) == 1)
+    Mp3CacheEntry e;
+    while (fread(&e, sizeof(e), 1, f) == 1)
     {
-        // Never load romfs entries
-        if (strncmp(entry.path, "romfs:/", 7) == 0)
+        if (!mp3CacheValid(e))
             continue;
 
-        // Per-folder cache filtering
-        if (strncmp(entry.path, folderKey, strlen(folderKey)) != 0)
-            continue;
-
-        if (!mp3CacheValid(entry))
-            continue;
-
-        playlistAdd(entry.path);
-
-        RuntimeMetadata r{};
-        strncpy(r.path, entry.path, sizeof(r.path) - 1);
-        r.path[sizeof(r.path) - 1] = '\0';
-        r.meta = entry.meta;
-
-        playlistMetadata.push_back(r);
+        g_mp3Cache[e.path] = e;
     }
 
     fclose(f);
+    g_cacheLoaded = true;
 }
 
 void mp3StopBackgroundScanner()
@@ -186,6 +165,24 @@ static void mp3ScanThread(void*)
         g_scanQueue.erase(g_scanQueue.begin());
         mutexUnlock(&g_scanMutex);
 
+        // 🚨 STEP 5: Cancel check (generation mismatch)
+        mutexLock(&g_scanMutex);
+        bool canceled = (job.generation != g_scanGeneration);
+        mutexUnlock(&g_scanMutex);
+
+        if (canceled)
+        {
+            // release "queued" flag for safety
+            mutexLock(&g_scanMutex);
+            g_scanQueuedPaths.erase(job.path);
+            mutexUnlock(&g_scanMutex);
+
+            debugLog("[SCAN] Canceled %s\n", job.path.c_str());
+            continue;
+        }
+
+        // --- Normal scan continues ---
+
         Mp3MetadataEntry entry{};
         readMp3Metadata(job.path.c_str(), entry);
         readID3v1Fallback(job.path.c_str(), entry);
@@ -204,14 +201,21 @@ static void mp3ScanThread(void*)
             );
 
         mutexLock(&g_metaMutex);
-        if (job.index >= 0 && job.index < (int)playlistMetadata.size())
+        if (job.index >= 0 &&
+            job.index < (int)playlistMetadata.size() &&
+            strcmp(playlistMetadata[job.index].path, job.path.c_str()) == 0)
+        {
             playlistMetadata[job.index].meta = entry;
+        }
         mutexUnlock(&g_metaMutex);
 
+        // ❗ Optional: you may also skip cache append if canceled earlier
         mp3AppendCache(job.path.c_str(), entry);
+
         debugLog("[SCAN] Processing %s (index=%d)\n",
-         job.path.c_str(), job.index);
-       // RELEASE "queued / scanning" flag
+                 job.path.c_str(), job.index);
+
+        // RELEASE "queued / scanning" flag
         mutexLock(&g_scanMutex);
         g_scanQueuedPaths.erase(job.path);
         mutexUnlock(&g_scanMutex);
@@ -695,6 +699,17 @@ void mp3ClearMetadata()
     playlistMetadata.clear();
 }
 
+void mp3CancelAllScans()
+{
+    mutexLock(&g_scanMutex);
+
+    g_scanQueue.clear();
+    g_scanQueuedPaths.clear();
+    g_scanGeneration++; // invalidate in-flight jobs
+
+    mutexUnlock(&g_scanMutex);
+}
+
 bool mp3AddToPlaylist(const char* path)
 {
     if (!path) return false;
@@ -715,7 +730,17 @@ bool mp3AddToPlaylist(const char* path)
     r.meta = meta;
 
     playlistMetadata.push_back(r);
+    //  Try cache first
+    auto it = g_mp3Cache.find(path);
+    if (it != g_mp3Cache.end() && mp3CacheValid(it->second))
+    {
+        mutexLock(&g_metaMutex);
+        playlistMetadata[index].meta = it->second.meta;
+        mutexUnlock(&g_metaMutex);
 
+        debugLog("[CACHE] Hit for %s\n", path);
+        return true;
+    }
     // ROMFS demo track → load metadata immediately
     if (strncmp(path, "romfs:/", 7) == 0)
     {
@@ -747,7 +772,7 @@ bool mp3AddToPlaylist(const char* path)
     mutexLock(&g_scanMutex);
     if (g_scanQueuedPaths.insert(path).second)
     {
-        g_scanQueue.push_back({ path, index });
+        g_scanQueue.push_back({ path, index, g_scanGeneration });
     }
     mutexUnlock(&g_scanMutex);
 
@@ -756,53 +781,74 @@ bool mp3AddToPlaylist(const char* path)
 
 void mp3AppendCache(const char* path, const Mp3MetadataEntry& meta)
 {
+    // 🔒 Reject invalid or ROMFS paths
     if (!path || strncmp(path, "romfs:/", 7) == 0)
         return;
 
-    ensureCacheDir();
+    // 🔒 Reject temp / garbage paths
+    if (strstr(path, ".tmp"))
+        return;
 
     struct stat st;
     if (stat(path, &st) != 0)
         return;
 
-    // --- Update or insert entry ---
-    bool found = false;
-    for (auto& e : g_mp3Cache)
-    {
-        if (strcmp(e.path, path) == 0)
-        {
-            e.meta  = meta;
-            e.mtime = st.st_mtime;
-            found = true;
-            break;
-        }
-    }
+    // 🔒 Avoid hammering SD card (write throttle)
+    static time_t lastWrite = 0;
+    time_t now = time(nullptr);
+    if (now - lastWrite < 1)
+        return;
+    lastWrite = now;
 
-    if (!found)
-    {
-        Mp3CacheEntry e{};
-        strncpy(e.path, path, sizeof(e.path) - 1);
-        e.mtime = st.st_mtime;
-        e.meta  = meta;
-        g_mp3Cache.push_back(e);
-    }
+    // Update in-memory cache
+    Mp3CacheEntry& e = g_mp3Cache[path];
 
-    // --- Rewrite cache file ---
-    FILE* f = fopen("sdmc:/config/winamp/mp3_cache.bin", "wb");
-    if (!f) return;
+    strncpy(e.path, path, sizeof(e.path) - 1);
+    e.path[sizeof(e.path) - 1] = '\0';   // defensive
+    e.meta  = meta;
+    e.mtime = st.st_mtime;
+
+    // 🔐 Write cache atomically via temp file
+    FILE* f = fopen(MP3_CACHE_TMP_PATH, "wb");
+    if (!f)
+    {
+        debugLog("[CACHE] Failed to open temp cache file\n");
+        return;
+    }
 
     Mp3CacheHeader h{};
-    h.magic = 0x4D503343; // 'MP3C'
+    h.magic   = 0x4D503343; // 'MP3C'
     h.version = MP3_CACHE_VERSION;
-    fwrite(&h, sizeof(h), 1, f);
 
-    for (auto& e : g_mp3Cache)
-        fwrite(&e, sizeof(e), 1, f);
+    if (fwrite(&h, sizeof(h), 1, f) != 1)
+        goto fail;
 
+    for (auto& [_, entry] : g_mp3Cache)
+    {
+        if (fwrite(&entry, sizeof(entry), 1, f) != 1)
+            goto fail;
+    }
+
+    // 🔐 Flush everything (best effort on Switch)
+    fflush(f);
+    fsync(fileno(f));
     fclose(f);
+
+    // 🔐 Atomic replace
+    remove(MP3_CACHE_PATH); // ignore failure
+    if (rename(MP3_CACHE_TMP_PATH, MP3_CACHE_PATH) != 0)
+    {
+        remove(MP3_CACHE_TMP_PATH);
+        return;
+    }
+
+    debugLog("[CACHE] Atomically wrote %zu entries\n", g_mp3Cache.size());
+    return;
+
+fail:
+    fclose(f);
+    remove(MP3_CACHE_TMP_PATH);
 }
-
-
 
 void mp3ReloadAllMetadata()
 {

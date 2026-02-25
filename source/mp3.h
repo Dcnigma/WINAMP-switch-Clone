@@ -11,6 +11,7 @@
 // Folder tracking
 bool mp3IsFolderLoaded(const char* path);
 void mp3SetLoadedFolder(const char* path);
+void mp3CancelAllScans();
 
 // Optional debug logging
 void debugLog(const char* fmt, ...);

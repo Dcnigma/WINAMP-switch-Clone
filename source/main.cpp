@@ -87,6 +87,8 @@ int main()
     SDL_Texture* texSHUFREP = IMG_LoadTexture(renderer, "romfs:/skins/SHUFREP.png");
 
     playlistClear();
+    mp3CancelAllScans();
+    mp3ClearMetadata();
     mp3AddToPlaylist("romfs:/song.mp3");
     playlistScroll = 0;
 
@@ -117,6 +119,8 @@ int main()
              // Clear playlist first
              playerStop();
              playlistClear();
+             mp3CancelAllScans();
+             mp3ClearMetadata();             
              fileBrowserOpen();
          }
 
