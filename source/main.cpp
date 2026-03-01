@@ -61,6 +61,7 @@ int main()
 {
     romfsInit();
     mp3StartBackgroundScanner();
+    //mp3FlushCacheIfNeeded();
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
     TTF_Init();
     IMG_Init(IMG_INIT_PNG);
@@ -86,9 +87,10 @@ int main()
     SDL_Texture* texCbuttons = IMG_LoadTexture(renderer, "romfs:/skins/CBUTTONS.png");
     SDL_Texture* texSHUFREP = IMG_LoadTexture(renderer, "romfs:/skins/SHUFREP.png");
 
-    playlistClear();
-    mp3CancelAllScans();
-    mp3ClearMetadata();
+    //playlistClear();
+    //mp3FlushCacheIfNeeded();
+    //mp3CancelAllScans();
+    //mp3ClearMetadata();
     mp3AddToPlaylist("romfs:/song.mp3");
     playlistScroll = 0;
 
@@ -102,7 +104,7 @@ int main()
         u64 down = padGetButtonsDown(&pad);
         u64 up   = padGetButtonsUp(&pad);
         u64 now  = svcGetSystemTick();
-
+        //mp3FlushCacheIfNeeded();
         updateStayAwakeLogic();
         // File browser open
 
@@ -119,8 +121,9 @@ int main()
              // Clear playlist first
              playerStop();
              playlistClear();
+             //mp3FlushCacheIfNeeded();
              mp3CancelAllScans();
-             mp3ClearMetadata();             
+             mp3ClearMetadata();
              fileBrowserOpen();
          }
 
@@ -259,7 +262,7 @@ int main()
 
         SDL_RenderPresent(renderer);
     }
-
+    //mp3FlushCacheIfNeeded();
     mp3StopBackgroundScanner();  // MUST be first
     playerStop();
 

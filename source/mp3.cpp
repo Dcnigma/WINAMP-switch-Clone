@@ -60,10 +60,16 @@ void mp3SetLoadedFolder(const char* path)
     g_loadedFolder[sizeof(g_loadedFolder) - 1] = '\0';
 }
 
+enum ScanPhase {
+    SCAN_FAST,
+    SCAN_ACCURATE
+};
+
 struct ScanJob {
     std::string path;
     int index;
     int generation;
+    ScanPhase phase;
 };
 
 static std::vector<ScanJob> g_scanQueue;
@@ -165,60 +171,103 @@ static void mp3ScanThread(void*)
         g_scanQueue.erase(g_scanQueue.begin());
         mutexUnlock(&g_scanMutex);
 
-        // 🚨 STEP 5: Cancel check (generation mismatch)
+        // Cancel check
         mutexLock(&g_scanMutex);
         bool canceled = (job.generation != g_scanGeneration);
         mutexUnlock(&g_scanMutex);
 
         if (canceled)
-        {
-            // release "queued" flag for safety
-            mutexLock(&g_scanMutex);
-            g_scanQueuedPaths.erase(job.path);
-            mutexUnlock(&g_scanMutex);
+            continue;
 
-            debugLog("[SCAN] Canceled %s\n", job.path.c_str());
+        Mp3MetadataEntry entry{};
+
+        // -------------------------
+        // PHASE 1 — FAST SCAN
+        // -------------------------
+        if (job.phase == SCAN_FAST)
+        {
+            readMp3Metadata(job.path.c_str(), entry);
+            readID3v1Fallback(job.path.c_str(), entry);
+            readMp3BitrateAndRate(
+                job.path.c_str(),
+                entry.bitrateKbps,
+                entry.sampleRateKHz,
+                entry.channels
+            );
+
+            // FAST duration only
+            struct stat st;
+            if (stat(job.path.c_str(), &st) == 0 && entry.bitrateKbps > 0)
+            {
+                long audioBytes = st.st_size - entry.id3TagBytes;
+                if (audioBytes < 0) audioBytes = st.st_size;
+
+                entry.durationSeconds =
+                    (int)((audioBytes * 8.0) /
+                    (entry.bitrateKbps * 1000.0));
+            }
+
+            mutexLock(&g_metaMutex);
+            if (job.index < (int)playlistMetadata.size())
+            {
+                playlistMetadata[job.index].meta = entry;
+            }
+            mutexUnlock(&g_metaMutex);
+
+            mp3AppendCache(job.path.c_str(), entry);
+
+            // Queue accurate scan ONLY if duration looks suspicious
+            if (entry.bitrateKbps <= 192)
+            {
+                mutexLock(&g_scanMutex);
+                g_scanQueue.push_back({
+                    job.path,
+                    job.index,
+                    g_scanGeneration,
+                    SCAN_ACCURATE
+                });
+                mutexUnlock(&g_scanMutex);
+            }
+
             continue;
         }
 
-        // --- Normal scan continues ---
-
-        Mp3MetadataEntry entry{};
-        readMp3Metadata(job.path.c_str(), entry);
-        readID3v1Fallback(job.path.c_str(), entry);
-        readMp3BitrateAndRate(
-            job.path.c_str(),
-            entry.bitrateKbps,
-            entry.sampleRateKHz,
-            entry.channels
-        );
-
-        entry.durationSeconds =
-            getMp3DurationSeconds(
-                job.path.c_str(),
-                entry.bitrateKbps,
-                entry.id3TagBytes
-            );
-
-        mutexLock(&g_metaMutex);
-        if (job.index >= 0 &&
-            job.index < (int)playlistMetadata.size() &&
-            strcmp(playlistMetadata[job.index].path, job.path.c_str()) == 0)
+        // -------------------------
+        // PHASE 2 — ACCURATE
+        // -------------------------
+        if (job.phase == SCAN_ACCURATE)
         {
-            playlistMetadata[job.index].meta = entry;
+            // Do NOT disturb currently playing track
+            if (playerIsPlaying() &&
+                playlistGetCurrentIndex() == job.index)
+            {
+                continue;
+            }
+
+            int bitrate = 0;
+            int duration =
+                getMp3DurationSeconds(
+                    job.path.c_str(),
+                    bitrate,
+                    entry.id3TagBytes
+                );
+
+            if (duration > 0)
+            {
+                mutexLock(&g_metaMutex);
+                if (job.index < (int)playlistMetadata.size())
+                {
+                    playlistMetadata[job.index].meta.durationSeconds = duration;
+                    playlistMetadata[job.index].meta.bitrateKbps = bitrate;
+                }
+                mutexUnlock(&g_metaMutex);
+
+                mp3AppendCache(
+                    job.path.c_str(),
+                    playlistMetadata[job.index].meta
+                );
+            }
         }
-        mutexUnlock(&g_metaMutex);
-
-        // ❗ Optional: you may also skip cache append if canceled earlier
-        mp3AppendCache(job.path.c_str(), entry);
-
-        debugLog("[SCAN] Processing %s (index=%d)\n",
-                 job.path.c_str(), job.index);
-
-        // RELEASE "queued / scanning" flag
-        mutexLock(&g_scanMutex);
-        g_scanQueuedPaths.erase(job.path);
-        mutexUnlock(&g_scanMutex);
     }
 }
 
@@ -772,7 +821,12 @@ bool mp3AddToPlaylist(const char* path)
     mutexLock(&g_scanMutex);
     if (g_scanQueuedPaths.insert(path).second)
     {
-        g_scanQueue.push_back({ path, index, g_scanGeneration });
+        g_scanQueue.push_back({
+            path,
+            index,
+            g_scanGeneration,
+            SCAN_FAST
+        });
     }
     mutexUnlock(&g_scanMutex);
 

@@ -84,18 +84,16 @@ static void scanDirectory(const char* path)
 static void importFolder(const char* path)
 {
     if (mp3IsFolderLoaded(path))
-    {
-        debugLog("[MP3] Folder already loaded: %s\n", path);
         return;
-    }
 
     mp3SetLoadedFolder(path);
+
     DIR* dir = opendir(path);
     if (!dir) return;
 
     std::vector<std::string> mp3Files;
-
     struct dirent* ent;
+
     while ((ent = readdir(dir)))
     {
         if (isMp3(ent->d_name))
@@ -105,29 +103,22 @@ static void importFolder(const char* path)
 
     std::sort(mp3Files.begin(), mp3Files.end());
 
-    mp3StopBackgroundScanner();
-    mp3ClearMetadata();
-    playlistClear();
+    // ✅ Correct order
     mp3CancelAllScans();
+    playlistClear();
     mp3ClearMetadata();
 
     char folderKey[512];
     snprintf(folderKey, sizeof(folderKey), "%s/", path);
-
     mp3LoadCache(folderKey);
-    mp3StartBackgroundScanner();
 
     playlistScroll = 0;
 
     for (auto& f : mp3Files)
     {
         std::string fullPath = std::string(path) + "/" + f;
-        if (fullPath.length() >= FB_PATH_LEN)
-            fullPath.resize(FB_PATH_LEN - 1);
-
-        mp3AddToPlaylist(fullPath.c_str());
+        mp3AddToPlaylist(fullPath.c_str());  // queues scans
     }
-
 }
 
 
@@ -143,7 +134,7 @@ void fileBrowserOpen()
 {
     playlistClear();
     mp3CancelAllScans();
-    mp3ClearMetadata();    
+    mp3ClearMetadata();
     scanDirectory("sdmc:/");
     playlistScroll = 0;
     active = true;
