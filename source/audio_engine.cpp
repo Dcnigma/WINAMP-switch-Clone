@@ -100,8 +100,7 @@ void AudioEngine::audioCallback(void* userdata, Uint8* stream, int len) {
             sample = g_equalizer.processSample(sample, channel);
 
             // soft clip
-            if (sample > 1.0f) sample = 1.0f;
-            if (sample < -1.0f) sample = -1.0f;
+            sample = sample / (1.0f + fabsf(sample));
 
             out[samplesWritten + i] = sample;
         }

@@ -236,6 +236,11 @@ int main()
         if (down & HidNpadButton_Minus)
           g_equalizer.toggle();
 
+        if (down & HidNpadButton_ZL)
+            g_equalizer.setPreamp(g_equalizer.getPreamp() - 1.0f);
+
+        if (down & HidNpadButton_ZR)
+            g_equalizer.setPreamp(g_equalizer.getPreamp() + 1.0f);
         // ---------------------------
         // Exit
         // ---------------------------

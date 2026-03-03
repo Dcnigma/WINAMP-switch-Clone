@@ -27,6 +27,14 @@ void Equalizer::setSampleRate(float sr)
         updateBandFilter(i);
 }
 
+void Equalizer::setPreamp(float db)
+{
+    db = std::clamp(db, -12.0f, 12.0f);
+
+    preampDb = db;
+    preampLinear = std::pow(10.0f, db / 20.0f);
+}
+
 void Equalizer::updateBandFilter(int index)
 {
     if (index < 1 || index > 10)
@@ -58,11 +66,6 @@ float Equalizer::getPreampLinear() const
     return preampLinear;
 }
 
-void Equalizer::updatePreamp()
-{
-    float db = bands[0];
-    preampLinear = std::pow(10.0f, db / 20.0f);
-}
 
 void Equalizer::setBand(int index, float value)
 {
@@ -71,11 +74,7 @@ void Equalizer::setBand(int index, float value)
 
     bands[index] = std::clamp(value, -12.0f, 12.0f);
 
-    if (index == 0)
-    {
-        updatePreamp();
-    }
-    else
+    //else
     {
         updateBandFilter(index);
     }
@@ -115,8 +114,11 @@ void Equalizer::toggle()
 {
     enabled = !enabled;
 
-    if (enabled)
-        preampLinear *= 0.8f;   // small headroom
+}
+
+float Equalizer::getPreamp() const
+{
+    return preampDb;
 }
 
 void Equalizer::setEnabled(bool state)
