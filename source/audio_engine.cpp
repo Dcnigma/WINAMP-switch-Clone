@@ -16,6 +16,8 @@ bool AudioEngine::init(int sampleRate, int ch) {
     device = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
     if (!device) return false;
 
+    g_equalizer.setSampleRate(static_cast<float>(have.freq));
+
     return true;
 }
 
@@ -93,11 +95,11 @@ void AudioEngine::audioCallback(void* userdata, Uint8* stream, int len) {
             float sample =
                 engine->buffer[(r + i) % BUFFER_SIZE];
 
-            // Apply Preamp
-            float gain = g_equalizer.getPreampLinear();
-            sample *= gain;
+            int channel = (samplesWritten + i) % engine->channels;
 
-            // Soft clip to avoid distortion
+            sample = g_equalizer.processSample(sample, channel);
+
+            // soft clip
             if (sample > 1.0f) sample = 1.0f;
             if (sample < -1.0f) sample = -1.0f;
 
