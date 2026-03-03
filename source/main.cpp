@@ -4,6 +4,7 @@
 #include <SDL_image.h>
 #include "ui.h"
 #include "mp3.h"
+#include "eq.h"
 #include "filebrowser.h"
 #include "playlist.h"
 #include "player.h"
@@ -228,6 +229,12 @@ int main()
         if (down & HidNpadButton_StickLDown) playerAdjustVolume(-0.05f);
         if (down & HidNpadButton_StickLLeft) playerSetPan(playerGetPan() - 0.1f);
         if (down & HidNpadButton_StickLRight)playerSetPan(playerGetPan() + 0.1f);
+
+        // ---------------------------
+        // Enabled DSP
+        // ---------------------------
+        if (down & HidNpadButton_Minus)
+          g_equalizer.toggle();
 
         // ---------------------------
         // Exit

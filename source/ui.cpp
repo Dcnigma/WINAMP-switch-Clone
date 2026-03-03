@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "mp3.h"
+#include "eq.h"
 #include "player.h"
 #include "playlist.h"
 #include "player_state.h"
@@ -888,7 +889,17 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawRect(renderer, eqBand10, 255,0,255,150);
     drawRect(renderer, eqBand11, 100,100,200,150);
 
-    drawRect(renderer, eqPreset1, 200,100,100,150);
+    if (g_equalizer.isEnabled())
+    {
+        // Green when ON
+        drawRect(renderer, eqPreset1, 100,200,100,150);
+    }
+    else
+    {
+        // Red when OFF
+        drawRect(renderer, eqPreset1, 200,100,100,150);
+    }
+
     drawRect(renderer, eqPreset2, 100,200,100,150);
     drawRect(renderer, eqPreset3, 100,100,100,150);
 

@@ -1,4 +1,5 @@
 #include "audio_engine.h"
+#include "eq.h"
 
 bool AudioEngine::init(int sampleRate, int ch) {
     channels = ch;
@@ -89,8 +90,18 @@ void AudioEngine::audioCallback(void* userdata, Uint8* stream, int len) {
                                  samplesRequested - samplesWritten);
 
         for (size_t i = 0; i < toCopy; ++i) {
-            out[samplesWritten + i] =
+            float sample =
                 engine->buffer[(r + i) % BUFFER_SIZE];
+
+            // Apply Preamp
+            float gain = g_equalizer.getPreampLinear();
+            sample *= gain;
+
+            // Soft clip to avoid distortion
+            if (sample > 1.0f) sample = 1.0f;
+            if (sample < -1.0f) sample = -1.0f;
+
+            out[samplesWritten + i] = sample;
         }
 
         engine->readPos.store(r + toCopy, std::memory_order_release);
