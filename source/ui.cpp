@@ -710,6 +710,77 @@ static void drawPlaylistSlider(SDL_Renderer* renderer,
 }
 
 
+//
+// static void drawPreampSlider(SDL_Renderer* renderer,
+//                              SDL_Texture* knobTex)
+// {
+//     if (!renderer || !knobTex) return;
+//
+//     SDL_Rect track = {720, 91, 346, 33};
+//
+//     const int knobW = 60;
+//     const int knobH = 33;
+//
+//     float db = g_equalizer.getPreamp();
+//
+//     // Normalize -12 → +12 into 0 → 1
+//     float t = (db + 12.0f) / 24.0f;
+//
+//     if (t < 0.0f) t = 0.0f;
+//     if (t > 1.0f) t = 1.0f;
+//
+//     int travel = track.w - knobW;
+//     int knobX  = track.x + (int)(t * travel);
+//     int knobY  = track.y;
+//
+//     SDL_Rect dstKnob = { knobX, knobY, knobW, knobH };
+//
+//     int centerX = track.x + (track.w / 2);
+//
+//     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
+//     SDL_RenderDrawLine(renderer,
+//                        centerX,
+//                        track.y,
+//                        centerX,
+//                        track.y + track.h);
+//
+//
+//     SDL_RenderCopy(renderer, knobTex, NULL, &dstKnob);
+// }
+
+
+static void drawPreampSlider(SDL_Renderer* renderer)
+{
+    if (!renderer) return;
+
+    SDL_Rect track = {720, 91, 346, 33};
+
+    // --- Draw track background ---
+    SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
+    SDL_RenderFillRect(renderer, &track);
+
+    // --- Normalize preamp -12 → +12 ---
+    float db = g_equalizer.getPreamp();
+    float t = (db + 12.0f) / 24.0f;
+
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+
+    // --- Knob ---
+    const int knobW = 20;
+    const int knobH = track.h;
+
+    int travel = track.w - knobW;
+    int knobX  = track.x + (int)(t * travel);
+    int knobY  = track.y;
+
+    SDL_Rect knob = { knobX, knobY, knobW, knobH };
+
+    SDL_SetRenderDrawColor(renderer, 200, 0, 0, 255); // single color (red)
+    SDL_RenderFillRect(renderer, &knob);
+}
+
+
 // --- Render full UI ---
 void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, SDL_Texture* texVolume, SDL_Texture* texPan,  SDL_Texture* texPlaylistKnob, SDL_Texture* texCbuttons, SDL_Texture* texSHUFREP, const char* songText)
 {
@@ -748,7 +819,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     // --- UI RECTANGLES ---
 //    SDL_Rect topBar        = {1837,   0,  83,1080};
 //    SDL_Rect mainPlayer    = {1287,   0, 558,1080};
-    SDL_Rect eqSection     = {650,    0, 654,1080};
+//    SDL_Rect eqSection     = {650,    0, 654,1080};
 //    SDL_Rect playlist      = {0,      0, 636,1080};
 
 
@@ -822,8 +893,9 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
 
     drawPlaylistSlider(renderer, texPlaylistKnob);
 
+    drawPreampSlider(renderer);
 
-    SDL_Rect eqBand1       = {720,   91,346, 33};
+    SDL_Rect eqBand1       = {720,   91,346, 33}; //preamp
     SDL_Rect eqBand2       = {720,  315,346, 33};
     SDL_Rect eqBand3       = {720,  387,346, 33};
     SDL_Rect eqBand4       = {720,  457,346, 33};
@@ -859,7 +931,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     // --- Draw rectangles with transparency ---
 //    drawRect(renderer, topBar, 200,0,0,150);
 //    drawRect(renderer, mainPlayer, 0,100,200,150);
-    drawRect(renderer, eqSection, 0,200,100,150);
+//    drawRect(renderer, eqSection, 0,200,100,150);
 //    drawRect(renderer, playlist, 200,200,0,150);
 //    drawRect(renderer, progBar, 150,0,200,150);
 //    drawRect(renderer, songInfo, 100,100,100,150);

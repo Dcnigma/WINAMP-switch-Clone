@@ -74,10 +74,8 @@ void Equalizer::setBand(int index, float value)
 
     bands[index] = std::clamp(value, -12.0f, 12.0f);
 
-    //else
-    {
-        updateBandFilter(index);
-    }
+    updateBandFilter(index);
+
 }
 
 float Equalizer::processSample(float sample, int channel)
