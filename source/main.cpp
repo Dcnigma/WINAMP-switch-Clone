@@ -15,6 +15,7 @@
 
 static u64 lastPlaybackActivityTick = 0;
 static bool stayAwakeActive = true;
+static int selectedBand = 1;
 
 // ----------------------------------
 // NEW: Scrub state (delta-time based)
@@ -241,6 +242,30 @@ int main()
 
         if (down & HidNpadButton_ZR)
             g_equalizer.setPreamp(g_equalizer.getPreamp() + 1.0f);
+
+        if (down & HidNpadButton_Up)
+        {
+            selectedBand--;
+            if (selectedBand < 1) selectedBand = 10;
+        }
+
+        if (down & HidNpadButton_Down)
+        {
+            selectedBand++;
+            if (selectedBand > 10) selectedBand = 1;
+        }
+
+        if (down & HidNpadButton_Left)
+        {
+            g_equalizer.setBand(selectedBand,
+                g_equalizer.getBand(selectedBand) - 1.0f);
+        }
+
+        if (down & HidNpadButton_Right)
+        {
+            g_equalizer.setBand(selectedBand,
+                g_equalizer.getBand(selectedBand) + 1.0f);
+        }
         // ---------------------------
         // Exit
         // ---------------------------

@@ -780,6 +780,34 @@ static void drawPreampSlider(SDL_Renderer* renderer)
     SDL_RenderFillRect(renderer, &knob);
 }
 
+static void drawEQBandSlider(SDL_Renderer* renderer,
+                             int bandIndex,
+                             const SDL_Rect& track)
+{
+    if (!renderer) return;
+
+    // Track background
+    SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
+    SDL_RenderFillRect(renderer, &track);
+
+    float db = g_equalizer.getBand(bandIndex);
+
+    // Normalize -12 → +12 into 0 → 1
+    float t = (db + 12.0f) / 24.0f;
+
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+
+    const int knobW = 20;
+    int travel = track.w - knobW;
+    int knobX  = track.x + (int)(t * travel);
+
+    SDL_Rect knob = { knobX, track.y, knobW, track.h };
+
+    SDL_SetRenderDrawColor(renderer, 200, 0, 0, 255);
+    SDL_RenderFillRect(renderer, &knob);
+}
+
 
 // --- Render full UI ---
 void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, SDL_Texture* texVolume, SDL_Texture* texPan,  SDL_Texture* texPlaylistKnob, SDL_Texture* texCbuttons, SDL_Texture* texSHUFREP, const char* songText)
@@ -891,9 +919,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     const Mp3MetadataEntry* md = mp3GetTrackMetadata(playerGetCurrentTrackIndex());
     drawMonoStereo(renderer, font, md, monoRect, stereoRect);
 
-    drawPlaylistSlider(renderer, texPlaylistKnob);
 
-    drawPreampSlider(renderer);
 
     SDL_Rect eqBand1       = {720,   91,346, 33}; //preamp
     SDL_Rect eqBand2       = {720,  315,346, 33};
@@ -911,6 +937,23 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     SDL_Rect eqPreset2     = {1112, 153, 73,131};
     SDL_Rect eqPreset3     = {1112, 851, 73,170};
 
+
+
+    drawPlaylistSlider(renderer, texPlaylistKnob);
+
+    drawEQBandSlider(renderer, 1, eqBand2);
+    drawEQBandSlider(renderer, 2, eqBand3);
+    drawEQBandSlider(renderer, 3, eqBand4);
+    drawEQBandSlider(renderer, 4, eqBand5);
+    drawEQBandSlider(renderer, 5, eqBand6);
+    drawEQBandSlider(renderer, 6, eqBand7);
+    drawEQBandSlider(renderer, 7, eqBand8);
+    drawEQBandSlider(renderer, 8, eqBand9);
+    drawEQBandSlider(renderer, 9, eqBand10);
+    drawEQBandSlider(renderer,10, eqBand11);
+
+    drawPreampSlider(renderer);
+    
 //    SDL_Rect volumeSlider  = {1551, 421,40,264};
 
     SDL_Rect volumeBarRect = { 1551, 421, 40, 264 }; // adjust to your skin
