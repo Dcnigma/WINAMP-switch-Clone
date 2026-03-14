@@ -11,6 +11,8 @@ public:
 
     float process(float in);
 
+    float getMagnitude(float freq, float sampleRate) const;
+    
 private:
     float a0 = 1, a1 = 0, a2 = 0;
     float b0 = 1, b1 = 0, b2 = 0;

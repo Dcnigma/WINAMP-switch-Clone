@@ -22,8 +22,7 @@ void Equalizer::setSampleRate(float sr)
 {
     sampleRate = sr;
 
-    // Rebuild all filters with new rate
-    for (int i = 1; i <= 10; ++i)
+    for (int i = 1; i < 10; ++i)
         updateBandFilter(i);
 }
 
@@ -35,6 +34,23 @@ void Equalizer::setPreamp(float db)
     preampLinear = std::pow(10.0f, db / 20.0f);
 }
 
+// void Equalizer::updateBandFilter(int index)
+// {
+//     if (index < 0 || index >= EQ_BAND_COUNT)
+//         return;
+//
+//     float gain = bands[index];
+//     float freq = bandFrequencies[index];
+//
+//     float nyquist = sampleRate * 0.5f;
+//
+//     if (freq >= nyquist)
+//         freq = nyquist * 0.9f;
+//
+//     filtersL[index].setupPeaking(sampleRate, freq, q, gain);
+//     filtersR[index].setupPeaking(sampleRate, freq, q, gain);
+// }
+
 void Equalizer::updateBandFilter(int index)
 {
     if (index < 1 || index > 10)
@@ -43,19 +59,14 @@ void Equalizer::updateBandFilter(int index)
     float gain = bands[index];
     int biquadIndex = index - 1;
 
-    filtersL[biquadIndex].setupPeaking(
-        sampleRate,
-        bandFrequencies[biquadIndex],
-        q,
-        gain
-    );
+    float freq = bandFrequencies[biquadIndex];
 
-    filtersR[biquadIndex].setupPeaking(
-        sampleRate,
-        bandFrequencies[biquadIndex],
-        q,
-        gain
-    );
+    float nyquist = sampleRate * 0.5f;
+    if (freq > nyquist * 0.9f)
+        freq = nyquist * 0.9f;
+
+    filtersL[biquadIndex].setupPeaking(sampleRate, freq, q, gain);
+    filtersR[biquadIndex].setupPeaking(sampleRate, freq, q, gain);
 }
 
 float Equalizer::getPreampLinear() const
@@ -75,7 +86,6 @@ void Equalizer::setBand(int index, float value)
     bands[index] = std::clamp(value, -12.0f, 12.0f);
 
     updateBandFilter(index);
-
 }
 
 float Equalizer::processSample(float sample, int channel)
@@ -131,6 +141,9 @@ bool Equalizer::isEnabled() const
 
 void Equalizer::reset()
 {
-    for (auto& b : bands)
-        b = 0.0f;
+    for (int i = 0; i < 10; i++)
+    {
+        bands[i] = 0.0f;
+        updateBandFilter(i);
+    }
 }

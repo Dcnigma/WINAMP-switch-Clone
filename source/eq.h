@@ -20,7 +20,7 @@ public:
 
     float getPreampLinear() const;
     float processSample(float sample, int channel);
-
+    const Biquad& getFilter(int index) const { return filtersL[index]; }
     void setSampleRate(float sr);
 
 private:

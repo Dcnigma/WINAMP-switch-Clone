@@ -48,6 +48,24 @@ extern bool playerIsRepeatEnabled();
 
 extern float g_fftInput[FFT_SIZE];
 
+// --- Y positions of the 10 bands ---
+static const int eqCurveY[10] =
+{
+    343,
+    390,
+    437,
+    484,
+    531,
+    579,
+    625,
+    673,
+    720,
+    767,
+};
+
+// --- animated band values ---
+static float eqDisplayBands[10] = {0};
+
 enum CButtonType {
     BTN_PREV,
     BTN_PLAY,
@@ -102,6 +120,183 @@ SDL_Rect shuf_src[] = {
     { 68, 87, 47,138}   // pressed on
 };
 
+
+// ------------------------------------------------------------
+// Smooth animation (called once per frame)
+// ------------------------------------------------------------
+static void updateEQAnimation()
+{
+    const float speed = 0.15f;
+
+    for (int i = 0; i < 10; i++)
+    {
+        float target = g_equalizer.getBand(i + 1);
+        eqDisplayBands[i] += (target - eqDisplayBands[i]) * speed;
+    }
+}
+
+// ------------------------------------------------------------
+// Catmull-Rom spline helper
+// ------------------------------------------------------------
+static SDL_Point catmullRom(SDL_Point p0,
+                            SDL_Point p1,
+                            SDL_Point p2,
+                            SDL_Point p3,
+                            float t)
+{
+    float t2 = t * t;
+    float t3 = t2 * t;
+
+    float x =
+        0.5f * ((2 * p1.x) +
+        (-p0.x + p2.x) * t +
+        (2*p0.x - 5*p1.x + 4*p2.x - p3.x) * t2 +
+        (-p0.x + 3*p1.x - 3*p2.x + p3.x) * t3);
+
+    float y =
+        0.5f * ((2 * p1.y) +
+        (-p0.y + p2.y) * t +
+        (2*p0.y - 5*p1.y + 4*p2.y - p3.y) * t2 +
+        (-p0.y + 3*p1.y - 3*p2.y + p3.y) * t3);
+
+    return { (int)(x + 0.5f), (int)(y + 0.5f) };
+}
+
+// ------------------------------------------------------------
+// EQ color gradient
+// green = flat
+// yellow/red = boost
+// darker green = cut
+// ------------------------------------------------------------
+static void getEQColor(float db, Uint8 &r, Uint8 &g, Uint8 &b)
+{
+    if (db < 0.0f)
+    {
+        float t = (-db) / 12.0f;
+
+        r = 0;
+        g = (Uint8)(255 * (1.0f - (t * 0.5f)));
+        b = 0;
+    }
+    else
+    {
+        float t = db / 12.0f;
+
+        r = (Uint8)(255 * t);
+        g = 255;
+        b = 0;
+    }
+}
+
+// ------------------------------------------------------------
+// Main curve renderer
+// ------------------------------------------------------------
+static void drawEQCurve(SDL_Renderer* renderer)
+{
+    if (!renderer) return;
+
+    const int centerX = 1134;
+    const int range   = 54;
+
+    SDL_Point points[12];
+
+    // --- start anchor ---
+    points[0] = {centerX, 336};
+
+    // --- band points ---
+    for (int i = 0; i < 10; i++)
+    {
+        float db = eqDisplayBands[i];
+
+        // smooth extreme boosts/cuts slightly
+        db = db * 0.85f + (db * db * db) * 0.0015f;
+
+        float t = db / 12.0f;
+
+        int x = centerX + (int)(t * range);
+        int y = eqCurveY[i];
+
+        points[i + 1] = {x, y};
+    }
+
+    // --- end anchor ---
+    points[11] = {centerX, 775};
+
+    bool firstPoint = true;
+    SDL_Point prev = points[0];  // start at anchor
+
+    for (int i = 0; i < 9; i++)
+    {
+        SDL_Point p0 = points[i];
+        SDL_Point p1 = points[i + 1];
+        SDL_Point p2 = points[i + 2];
+        SDL_Point p3 = points[i + 3];
+
+        for (float t = 0; t <= 1.0f; t += 0.008f)
+        {
+            SDL_Point p = catmullRom(p0,p1,p2,p3,t);
+            if (p.x < centerX - range) p.x = centerX - range;
+            if (p.x > centerX + range) p.x = centerX + range;
+            float db = (float)(p.x - centerX) / range * 12.0f;
+            if (db > 12.0f) db = 12.0f;
+            if (db < -12.0f) db = -12.0f;
+
+            Uint8 r,g,b;
+            getEQColor(db,r,g,b);
+
+            if (!firstPoint)
+            {
+                // glow
+                SDL_SetRenderDrawColor(renderer,r,g,b,60);
+
+                for (int w=-4; w<=4; w++)
+                {
+                    SDL_RenderDrawLine(renderer,
+                                       prev.x+w, prev.y,
+                                       p.x+w,    p.y);
+                }
+
+                // core line
+                SDL_SetRenderDrawColor(renderer,r,g,b,255);
+
+                for (int w=-2; w<=2; w++)
+                {
+                    SDL_RenderDrawLine(renderer,
+                                       prev.x+w, prev.y,
+                                       p.x+w,    p.y);
+                }
+            }
+
+            prev = p;
+            firstPoint = false;
+        }
+    }
+
+    // --- draw control dots ---
+    SDL_SetRenderDrawColor(renderer,255,255,255,255);
+
+    for(int i=1;i<=10;i++)
+    {
+        SDL_Rect dot =
+        {
+            points[i].x-2,
+            points[i].y-2,
+            4,
+            4
+        };
+
+        SDL_RenderFillRect(renderer,&dot);
+    }
+}
+
+// ------------------------------------------------------------
+// Public call from render loop
+// ------------------------------------------------------------
+void renderEQCurve(SDL_Renderer* renderer)
+{
+    updateEQAnimation();
+    drawEQCurve(renderer);
+}
 
 void uiNotifyButtonPress(UIButton btn)
 {
@@ -430,7 +625,7 @@ for (int b = 0; b < SPECTRUM_BARS; b++)
     if (avg > 1.0f) avg = 1.0f;
     if (avg < 0.0f) avg = 0.0f;
 
-    // 🔥 SMOOTHING
+    // SMOOTHING
     bandSmooth[b] += (avg - bandSmooth[b]) * SMOOTHING;
 
     bandValues[b] = bandSmooth[b];
@@ -709,46 +904,6 @@ static void drawPlaylistSlider(SDL_Renderer* renderer,
     SDL_RenderCopy(renderer, knobTex, NULL, &dstKnob);
 }
 
-
-//
-// static void drawPreampSlider(SDL_Renderer* renderer,
-//                              SDL_Texture* knobTex)
-// {
-//     if (!renderer || !knobTex) return;
-//
-//     SDL_Rect track = {720, 91, 346, 33};
-//
-//     const int knobW = 60;
-//     const int knobH = 33;
-//
-//     float db = g_equalizer.getPreamp();
-//
-//     // Normalize -12 → +12 into 0 → 1
-//     float t = (db + 12.0f) / 24.0f;
-//
-//     if (t < 0.0f) t = 0.0f;
-//     if (t > 1.0f) t = 1.0f;
-//
-//     int travel = track.w - knobW;
-//     int knobX  = track.x + (int)(t * travel);
-//     int knobY  = track.y;
-//
-//     SDL_Rect dstKnob = { knobX, knobY, knobW, knobH };
-//
-//     int centerX = track.x + (track.w / 2);
-//
-//     SDL_SetRenderDrawColor(renderer, 255, 255, 255, 100);
-//     SDL_RenderDrawLine(renderer,
-//                        centerX,
-//                        track.y,
-//                        centerX,
-//                        track.y + track.h);
-//
-//
-//     SDL_RenderCopy(renderer, knobTex, NULL, &dstKnob);
-// }
-
-
 static void drawPreampSlider(SDL_Renderer* renderer)
 {
     if (!renderer) return;
@@ -844,13 +999,6 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
         SDL_RenderCopy(renderer, skin, NULL, &dst);
     }
 
-    // --- UI RECTANGLES ---
-//    SDL_Rect topBar        = {1837,   0,  83,1080};
-//    SDL_Rect mainPlayer    = {1287,   0, 558,1080};
-//    SDL_Rect eqSection     = {650,    0, 654,1080};
-//    SDL_Rect playlist      = {0,      0, 636,1080};
-
-
     SDL_Rect progBar        = {1467,  64,  61, 982};
     SDL_Rect progIndicatorR = {1469,  577, 62, 113};
 
@@ -897,15 +1045,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
         shuffleEnabled,
         shufflePressed
     );
-    //
-    // DrawRepeat(
-    //     renderer,
-    //     texSHUFREP,
-    //     rep_src,
-    //     repeatButton,
-    //     repeatEnabled,
-    //     repeatPressed
-    // );
+
     DrawRepeat(
         renderer,
         texSHUFREP,
@@ -919,7 +1059,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     const Mp3MetadataEntry* md = mp3GetTrackMetadata(playerGetCurrentTrackIndex());
     drawMonoStereo(renderer, font, md, monoRect, stereoRect);
 
-
+    renderEQCurve(renderer);
 
     SDL_Rect eqBand1       = {720,   91,346, 33}; //preamp
     SDL_Rect eqBand2       = {720,  315,346, 33};
@@ -953,7 +1093,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawEQBandSlider(renderer,10, eqBand11);
 
     drawPreampSlider(renderer);
-    
+
 //    SDL_Rect volumeSlider  = {1551, 421,40,264};
 
     SDL_Rect volumeBarRect = { 1551, 421, 40, 264 }; // adjust to your skin
