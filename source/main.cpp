@@ -243,6 +243,11 @@ int main()
         if (down & HidNpadButton_ZR)
             g_equalizer.setPreamp(g_equalizer.getPreamp() + 1.0f);
 
+        if (down & HidNpadButton_StickR)
+        {
+            autoEQEnabled = !autoEQEnabled;
+        }
+
         if (down & HidNpadButton_Up)
         {
             selectedBand--;

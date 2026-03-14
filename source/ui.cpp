@@ -18,6 +18,8 @@
 #define FFT_SIZE 1024
 #define SPECTRUM_BARS 20
 
+bool autoEQEnabled = false;
+
 static kiss_fftr_cfg fftCfg = NULL;
 static kiss_fft_cpx fftOut[FFT_SIZE/2];
 static float fftMag[FFT_SIZE/2];
@@ -183,7 +185,7 @@ static void getEQColor(float db, Uint8 &r, Uint8 &g, Uint8 &b)
         float t = db / 12.0f;
 
         r = (Uint8)(255 * t);
-        g = 255;
+        g = 220 + (Uint8)(35 * (1.0f - t));
         b = 0;
     }
 }
@@ -246,25 +248,35 @@ static void drawEQCurve(SDL_Renderer* renderer)
 
             if (!firstPoint)
             {
-                // glow
-                SDL_SetRenderDrawColor(renderer,r,g,b,60);
+              // outer glow (very soft)
+              SDL_SetRenderDrawColor(renderer,r,g,b,20);
 
-                for (int w=-4; w<=4; w++)
-                {
-                    SDL_RenderDrawLine(renderer,
-                                       prev.x+w, prev.y,
-                                       p.x+w,    p.y);
-                }
+              for (int w=-6; w<=6; w++)
+              {
+                  SDL_RenderDrawLine(renderer,
+                                     prev.x+w, prev.y,
+                                     p.x+w,    p.y);
+              }
 
-                // core line
-                SDL_SetRenderDrawColor(renderer,r,g,b,255);
+              // main glow
+              SDL_SetRenderDrawColor(renderer,r,g,b,70);
 
-                for (int w=-2; w<=2; w++)
-                {
-                    SDL_RenderDrawLine(renderer,
-                                       prev.x+w, prev.y,
-                                       p.x+w,    p.y);
-                }
+              for (int w=-4; w<=4; w++)
+              {
+                  SDL_RenderDrawLine(renderer,
+                                     prev.x+w, prev.y,
+                                     p.x+w,    p.y);
+              }
+
+              // core line
+              SDL_SetRenderDrawColor(renderer,r,g,b,255);
+
+              for (int w=-1; w<=1; w++)
+              {
+                  SDL_RenderDrawLine(renderer,
+                                     prev.x+w, prev.y,
+                                     p.x+w,    p.y);
+              }
             }
 
             prev = p;
@@ -288,6 +300,9 @@ static void drawEQCurve(SDL_Renderer* renderer)
         SDL_RenderFillRect(renderer,&dot);
     }
 }
+
+
+
 
 // ------------------------------------------------------------
 // Public call from render loop
@@ -1058,7 +1073,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
 
     const Mp3MetadataEntry* md = mp3GetTrackMetadata(playerGetCurrentTrackIndex());
     drawMonoStereo(renderer, font, md, monoRect, stereoRect);
-
+    updateAutoEQ();
     renderEQCurve(renderer);
 
     SDL_Rect eqBand1       = {720,   91,346, 33}; //preamp
@@ -1155,7 +1170,18 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
         drawRect(renderer, eqPreset1, 200,100,100,150);
     }
 
-    drawRect(renderer, eqPreset2, 100,200,100,150);
+    if (autoEQEnabled)
+    {
+        // green active
+        drawRect(renderer, eqPreset2, 80,220,120,200);
+    }
+    else
+    {
+        // red inactive
+        drawRect(renderer, eqPreset2, 200,100,100,150);
+    }
+
+
     drawRect(renderer, eqPreset3, 100,100,100,150);
 
 //    drawRect(renderer, volumeSlider, 150,150,0,150);

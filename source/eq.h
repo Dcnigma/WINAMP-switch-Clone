@@ -3,7 +3,7 @@
 #include "biquad.h"
 
 constexpr int EQ_BAND_COUNT = 11;
-
+extern bool autoEQEnabled;
 class Equalizer
 {
 public:
@@ -38,5 +38,5 @@ private:
     void updatePreamp();
     void updateBandFilter(int index);
 };
-
+void updateAutoEQ();
 extern Equalizer g_equalizer;

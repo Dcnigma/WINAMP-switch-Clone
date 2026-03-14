@@ -4,6 +4,10 @@
 
 Equalizer g_equalizer;
 
+static float autoEQBuffer[1024];
+static int autoEQIndex = 0;
+//bool autoEQEnabled = false;
+
 static const float bandFrequencies[10] =
 {
     60.0f,
@@ -80,7 +84,7 @@ float Equalizer::getPreampLinear() const
 
 void Equalizer::setBand(int index, float value)
 {
-    if (index < 0 || index >= EQ_BAND_COUNT)
+    if (index < 1 || index > 10)
         return;
 
     bands[index] = std::clamp(value, -12.0f, 12.0f);
@@ -88,10 +92,51 @@ void Equalizer::setBand(int index, float value)
     updateBandFilter(index);
 }
 
+void updateAutoEQ()
+{
+    if (!autoEQEnabled)
+        return;
+
+    const int N = 1024;
+
+    float bandEnergy[10] = {0};
+
+    for (int i = 0; i < N; i++)
+    {
+        float s = autoEQBuffer[i];
+        float power = s * s;
+
+        // crude frequency approximation
+        int band = (i * 10) / N;
+        if (band >= 10) band = 9;
+
+        bandEnergy[band] += power;
+    }
+
+    static float smoothed[10] = {0};
+
+    for (int b = 0; b < 10; b++)
+    {
+        smoothed[b] = smoothed[b] * 0.8f + bandEnergy[b] * 0.2f;
+
+        float db = log10f(smoothed[b] + 1e-6f) * 6.0f;
+
+        if (db > 6) db = 6;
+        if (db < -6) db = -6;
+
+        g_equalizer.setBand(b + 1, db);
+    }
+}
+
 float Equalizer::processSample(float sample, int channel)
 {
     if (!enabled)
         return sample;
+
+    autoEQBuffer[autoEQIndex++] = sample;
+
+    if (autoEQIndex >= 1024)
+        autoEQIndex = 0;
 
     // Apply preamp
     sample *= preampLinear;
