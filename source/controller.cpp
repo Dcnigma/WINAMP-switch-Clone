@@ -6,13 +6,14 @@
 #include "playlist.h"
 #include "player.h"
 #include "player_state.h"
-#include "controller.h"
+
 
 static PadState g_pad;
 
 extern bool autoEQEnabled;
-//extern int selectedBand;
-// static int selectedBand = 1;
+
+extern int selectedBand;
+
 
 struct ScrubState
 {
@@ -152,44 +153,48 @@ void controllerHandlePlayerControls()
     // ---------------------------
     // Equalizer
     // ---------------------------
-    //
-    // if (down & HidNpadButton_Minus)
-    //     g_equalizer.toggle();
-    //
-    // if (down & HidNpadButton_ZL)
-    //     g_equalizer.setPreamp(g_equalizer.getPreamp() - 1.0f);
-    //
-    // if (down & HidNpadButton_ZR)
-    //     g_equalizer.setPreamp(g_equalizer.getPreamp() + 1.0f);
-    //
-    // if (down & HidNpadButton_StickR)
-    //     autoEQEnabled = !autoEQEnabled;
-    //
-    // if (down & HidNpadButton_Up)
-    // {
-    //     selectedBand--;
-    //     if (selectedBand < 1) selectedBand = 10;
-    // }
-    //
-    // if (down & HidNpadButton_Down)
-    // {
-    //     selectedBand++;
-    //     if (selectedBand > 10) selectedBand = 1;
-    // }
-    //
-    // if (down & HidNpadButton_Left)
-    // {
-    //     g_equalizer.setBand(
-    //         selectedBand,
-    //         g_equalizer.getBand(selectedBand) - 1.0f
-    //     );
-    // }
-    //
-    // if (down & HidNpadButton_Right)
-    // {
-    //     g_equalizer.setBand(
-    //         selectedBand,
-    //         g_equalizer.getBand(selectedBand) + 1.0f
-    //     );
-    // }
+    if (down & HidNpadButton_Minus)
+        g_equalizer.toggle();
+
+    if (down & HidNpadButton_ZL)
+        g_equalizer.setPreamp(g_equalizer.getPreamp() - 1.0f);
+
+    if (down & HidNpadButton_ZR)
+        g_equalizer.setPreamp(g_equalizer.getPreamp() + 1.0f);
+
+    if (down & HidNpadButton_StickR)
+        autoEQEnabled = !autoEQEnabled;
+
+    if (down & HidNpadButton_Up)
+    {
+        selectedBand--;
+        if (selectedBand < 1) selectedBand = 10;
+    }
+
+    if (down & HidNpadButton_Down)
+    {
+        selectedBand++;
+        if (selectedBand > 10) selectedBand = 1;
+    }
+
+    if (down & HidNpadButton_Left)
+    {
+        g_equalizer.setBand(
+            selectedBand,
+            g_equalizer.getBand(selectedBand) - 1.0f
+        );
+    }
+
+    if (down & HidNpadButton_Right)
+    {
+        g_equalizer.setBand(
+            selectedBand,
+            g_equalizer.getBand(selectedBand) + 1.0f
+        );
+    }
+    // Scroll playlist
+    if (down & HidNpadButton_Up)   playlistScrollUp();
+    if (down & HidNpadButton_Down) playlistScrollDown();
+
+
 }

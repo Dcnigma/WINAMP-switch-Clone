@@ -16,7 +16,7 @@
 
 static u64 lastPlaybackActivityTick = 0;
 static bool stayAwakeActive = true;
-static int selectedBand = 1;
+int selectedBand = 1;
 
 // ----------------------------------
 // NEW: Scrub state (delta-time based)
@@ -29,8 +29,6 @@ struct ScrubState
 };
 
 static ScrubState g_scrub;
-
-// ----------------------------------
 
 void updateStayAwakeLogic()
 {
@@ -68,7 +66,7 @@ int main()
     playerInit();
 
     SDL_Window* window = SDL_CreateWindow(
-        "Winamp Switch Demo",
+        "Winamp Switch",
         0, 0, FB_W, FB_H,
         SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP
     );
@@ -95,24 +93,21 @@ int main()
 
     while (appletMainLoop())
     {
+        updateStayAwakeLogic();
         //New controller inputs
         controllerUpdate();
-
         controllerHandlePlayerControls();
-
         PadState* pad = controllerGetPad();
-
         u64 down = padGetButtonsDown(pad);
         u64 up   = padGetButtonsUp(pad);
         u64 now  = svcGetSystemTick();
 
-        updateStayAwakeLogic();
         // File browser open
-
         if (down & HidNpadButton_Plus)
              break;
 
-         // File browser open
+         // File browser open todo: needs some tweaks, this should be mapped to the "eject button" in touchscreen.
+         // if the "add button" (touchscreen) is used in the playlist window it should not do a playlistclear.
          if (fileBrowserIsActive())
          {
              fileBrowserUpdate(pad);
@@ -125,7 +120,6 @@ int main()
              mp3ClearMetadata();
              fileBrowserOpen();
          }
-
          // Play first track with A
          if (!fileBrowserIsActive() && (down & HidNpadButton_A))
          {
@@ -133,62 +127,13 @@ int main()
                  playerPlay(playlistGetCurrentIndex());
          }
 
-
-
-         // Scroll playlist
-         if (down & HidNpadButton_Up)   playlistScrollUp();
-         if (down & HidNpadButton_Down) playlistScrollDown();
-
-         playerUpdate();
-
-        // ---------------------------
-        // Enabled DSP
-        // ---------------------------
-        if (down & HidNpadButton_Minus)
-          g_equalizer.toggle();
-
-        if (down & HidNpadButton_ZL)
-            g_equalizer.setPreamp(g_equalizer.getPreamp() - 1.0f);
-
-        if (down & HidNpadButton_ZR)
-            g_equalizer.setPreamp(g_equalizer.getPreamp() + 1.0f);
-
-        if (down & HidNpadButton_StickR)
-        {
-            autoEQEnabled = !autoEQEnabled;
-        }
-
-        if (down & HidNpadButton_Up)
-        {
-            selectedBand--;
-            if (selectedBand < 1) selectedBand = 10;
-        }
-
-        if (down & HidNpadButton_Down)
-        {
-            selectedBand++;
-            if (selectedBand > 10) selectedBand = 1;
-        }
-
-        if (down & HidNpadButton_Left)
-        {
-            g_equalizer.setBand(selectedBand,
-                g_equalizer.getBand(selectedBand) - 1.0f);
-        }
-
-        if (down & HidNpadButton_Right)
-        {
-            g_equalizer.setBand(selectedBand,
-                g_equalizer.getBand(selectedBand) + 1.0f);
-        }
-
         updateAutoEQ();
         playerUpdate();
 
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
 
-        char songText[256] = "Stopped";
+        char songText[256] = " ";
         int idx = playerGetCurrentTrackIndex();
         if (idx >= 0)
         {
@@ -211,7 +156,7 @@ int main()
         SDL_RenderPresent(renderer);
     }
 
-    mp3StopBackgroundScanner(); 
+    mp3StopBackgroundScanner();
     playerStop();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
