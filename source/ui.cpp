@@ -11,6 +11,8 @@
 #include <string.h>
 #include <math.h>
 #include "kiss_fftr.h"
+#include "spectrum.h"
+
 
 #define FB_W 1920
 #define FB_H 1080
@@ -23,7 +25,9 @@ bool autoEQEnabled = false;
 static kiss_fftr_cfg fftCfg = NULL;
 static kiss_fft_cpx fftOut[FFT_SIZE/2];
 static float fftMag[FFT_SIZE/2];
-static float bandValues[SPECTRUM_BARS];
+//static float bandValues[SPECTRUM_BARS];
+float bandValues[SPECTRUM_BARS] = {0};
+
 static float bandSmooth[SPECTRUM_BARS] = {0.0f};
 
 static int  scrollOffset = 0;
@@ -625,7 +629,7 @@ static void computeSpectrum()
 
     int binsPerBand = (FFT_SIZE/2) / SPECTRUM_BARS;
 
-const float SMOOTHING = 0.25f; // 0.1 = very smooth, 0.4 = snappy
+const float SMOOTHING = 0.15f; // 0.1 = very smooth, 0.4 = snappy
 
 for (int b = 0; b < SPECTRUM_BARS; b++)
 {
@@ -1073,7 +1077,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
 
     const Mp3MetadataEntry* md = mp3GetTrackMetadata(playerGetCurrentTrackIndex());
     drawMonoStereo(renderer, font, md, monoRect, stereoRect);
-    updateAutoEQ();
+
     renderEQCurve(renderer);
 
     SDL_Rect eqBand1       = {720,   91,346, 33}; //preamp

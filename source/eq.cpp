@@ -1,4 +1,6 @@
+#include <switch.h>
 #include "eq.h"
+#include "ui.h"
 #include <algorithm>
 #include <cmath>
 
@@ -7,6 +9,11 @@ Equalizer g_equalizer;
 static float autoEQBuffer[1024];
 static int autoEQIndex = 0;
 //bool autoEQEnabled = false;
+//extern float bandValues[20];
+//extern const int SPECTRUM_BARS;
+
+#define SPECTRUM_BARS 20
+extern float bandValues[SPECTRUM_BARS];
 
 static const float bandFrequencies[10] =
 {
@@ -21,6 +28,24 @@ static const float bandFrequencies[10] =
     14000.0f,
     16000.0f
 };
+
+// static void simpleFFT(const float* inReal, float* outMag, int N)
+// {
+//     for (int k = 0; k < N / 2; k++)
+//     {
+//         float real = 0.0f;
+//         float imag = 0.0f;
+//
+//         for (int n = 0; n < N; n++)
+//         {
+//             float phase = 2.0f * M_PI * k * n / N;
+//             real += inReal[n] * cosf(phase);
+//             imag -= inReal[n] * sinf(phase);
+//         }
+//
+//         outMag[k] = sqrtf(real * real + imag * imag);
+//     }
+// }
 
 void Equalizer::setSampleRate(float sr)
 {
@@ -37,23 +62,6 @@ void Equalizer::setPreamp(float db)
     preampDb = db;
     preampLinear = std::pow(10.0f, db / 20.0f);
 }
-
-// void Equalizer::updateBandFilter(int index)
-// {
-//     if (index < 0 || index >= EQ_BAND_COUNT)
-//         return;
-//
-//     float gain = bands[index];
-//     float freq = bandFrequencies[index];
-//
-//     float nyquist = sampleRate * 0.5f;
-//
-//     if (freq >= nyquist)
-//         freq = nyquist * 0.9f;
-//
-//     filtersL[index].setupPeaking(sampleRate, freq, q, gain);
-//     filtersR[index].setupPeaking(sampleRate, freq, q, gain);
-// }
 
 void Equalizer::updateBandFilter(int index)
 {
@@ -97,34 +105,40 @@ void updateAutoEQ()
     if (!autoEQEnabled)
         return;
 
-    const int N = 1024;
+    const int EQ_BANDS = 10;
+    const int BARS_PER_BAND = SPECTRUM_BARS / EQ_BANDS;
 
-    float bandEnergy[10] = {0};
+    static float smoothed[EQ_BANDS] = {0};
 
-    for (int i = 0; i < N; i++)
+    for (int b = 0; b < EQ_BANDS; b++)
     {
-        float s = autoEQBuffer[i];
-        float power = s * s;
+        float energy = 0.0f;
 
-        // crude frequency approximation
-        int band = (i * 10) / N;
-        if (band >= 10) band = 9;
+        // merge spectrum bars into EQ bands
+        for (int i = 0; i < BARS_PER_BAND; i++)
+        {
+            int idx = b * BARS_PER_BAND + i;
+            energy += bandValues[idx];
+        }
 
-        bandEnergy[band] += power;
-    }
+        energy /= BARS_PER_BAND;
 
-    static float smoothed[10] = {0};
+        // smooth movement
+        smoothed[b] = smoothed[b] * 0.94f + energy * 0.06f;
 
-    for (int b = 0; b < 10; b++)
-    {
-        smoothed[b] = smoothed[b] * 0.8f + bandEnergy[b] * 0.2f;
+        float db = (smoothed[b] - 0.5f) * 12.0f;
 
-        float db = log10f(smoothed[b] + 1e-6f) * 6.0f;
+        if (db > 6.0f) db = 6.0f;
+        if (db < -6.0f) db = -6.0f;
 
-        if (db > 6) db = 6;
-        if (db < -6) db = -6;
+        float current = g_equalizer.getBand(b + 1);
 
-        g_equalizer.setBand(b + 1, db);
+        float diff = db - current;
+
+        if (diff > 0.4f) diff = 0.4f;
+        if (diff < -0.4f) diff = -0.4f;
+
+        g_equalizer.setBand(b + 1, current + diff);
     }
 }
 

@@ -276,7 +276,7 @@ int main()
         // ---------------------------
         if (down & HidNpadButton_Plus)
             break;
-
+        updateAutoEQ();
         playerUpdate();
 
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
