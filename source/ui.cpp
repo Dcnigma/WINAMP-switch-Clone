@@ -28,6 +28,9 @@ static float fftMag[FFT_SIZE/2];
 //static float bandValues[SPECTRUM_BARS];
 float bandValues[SPECTRUM_BARS] = {0};
 
+float peakValues[SPECTRUM_BARS] = {0};
+int   peakHold[SPECTRUM_BARS]   = {0};
+
 static float bandSmooth[SPECTRUM_BARS] = {0.0f};
 
 static int  scrollOffset = 0;
@@ -1206,6 +1209,8 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
 //    drawWinampSpectrumVertical(renderer, spectrumRect);
 
     computeSpectrum();
+
+
 
     SDL_Rect spectrumRect = {1592, 90, 93, 306};
     drawWinampSpectrumVertical(renderer, spectrumRect, bandValues);
