@@ -58,13 +58,10 @@ void updateStayAwakeLogic()
     }
 }
 
-
-
 int main()
 {
     romfsInit();
     mp3StartBackgroundScanner();
-    //mp3FlushCacheIfNeeded();
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
     TTF_Init();
     IMG_Init(IMG_INIT_PNG);
@@ -90,32 +87,25 @@ int main()
     SDL_Texture* texCbuttons = IMG_LoadTexture(renderer, "romfs:/skins/CBUTTONS.png");
     SDL_Texture* texSHUFREP = IMG_LoadTexture(renderer, "romfs:/skins/SHUFREP.png");
 
-    //playlistClear();
-    //mp3FlushCacheIfNeeded();
-    //mp3CancelAllScans();
-    //mp3ClearMetadata();
     mp3AddToPlaylist("romfs:/song.mp3");
     playlistScroll = 0;
 
     controllerInit();
-    // PadState pad;
-    // padConfigureInput(1, HidNpadStyleTag_NpadHandheld | HidNpadStyleTag_NpadFullKey);
-    // padInitializeDefault(&pad);
+
 
     while (appletMainLoop())
     {
-        // padUpdate(&pad);
-        // u64 down = padGetButtonsDown(&pad);
-        // u64 up   = padGetButtonsUp(&pad);
         //New controller inputs
         controllerUpdate();
+
+        controllerHandlePlayerControls();
 
         PadState* pad = controllerGetPad();
 
         u64 down = padGetButtonsDown(pad);
         u64 up   = padGetButtonsUp(pad);
         u64 now  = svcGetSystemTick();
-        //mp3FlushCacheIfNeeded();
+
         updateStayAwakeLogic();
         // File browser open
 
@@ -129,10 +119,8 @@ int main()
          }
          else if (down & HidNpadButton_B)
          {
-             // Clear playlist first
              playerStop();
              playlistClear();
-             //mp3FlushCacheIfNeeded();
              mp3CancelAllScans();
              mp3ClearMetadata();
              fileBrowserOpen();
@@ -152,93 +140,6 @@ int main()
          if (down & HidNpadButton_Down) playlistScrollDown();
 
          playerUpdate();
-
-
-        // ---------------------------
-        // Playback controls
-        // ---------------------------
-        if (down & HidNpadButton_A)
-        {
-            uiNotifyButtonPress(UI_BTN_PLAY);
-
-            if (playerIsPaused())
-                playerTogglePause();
-            else
-                playerPlay(playlistGetCurrentIndex());
-        }
-
-        if (down & HidNpadButton_Y)
-        {
-            uiNotifyButtonPress(UI_BTN_PAUSE);
-            playerTogglePause();
-        }
-
-        if (down & HidNpadButton_X)
-            playerStop();
-
-        if (down & HidNpadButton_StickRRight)
-        {
-            uiNotifyButtonPress(UI_BTN_NEXT);
-            playerNext();
-        }
-
-        if (down & HidNpadButton_StickRLeft)
-        {
-            uiNotifyButtonPress(UI_BTN_PREV);
-
-            if (playerGetPosition() > PREV_RESTART_THRESHOLD)
-                playerSeek(0.0f);
-            else
-                playerPrev();
-        }
-
-        if (down & HidNpadButton_StickRUp)
-            playerCycleRepeat();
-
-        if (down & HidNpadButton_StickRDown)
-            playerToggleShuffle();
-
-        // ---------------------------
-        // NEW: Winamp-style scrubbing
-        // ---------------------------
-        if (down & HidNpadButton_R)
-        {
-            g_scrub = { true, true, now };
-        }
-        else if (down & HidNpadButton_L)
-        {
-            g_scrub = { true, false, now };
-        }
-
-        if (g_scrub.active)
-        {
-            if ((up & HidNpadButton_R) || (up & HidNpadButton_L))
-            {
-                g_scrub.active = false;
-            }
-            else
-            {
-                float heldSec = (now - g_scrub.startTicks) / 19200000.0f;
-                float step = 1.0f;
-
-                if (heldSec > 2.0f)      step = 8.0f;
-                else if (heldSec > 0.5f) step = 3.0f;
-
-                float pos = playerGetPosition();
-                pos += g_scrub.forward ? step : -step;
-                if (pos < 0.0f) pos = 0.0f;
-
-                playerSeek(pos);
-            }
-        }
-
-        // ---------------------------
-        // Volume & pan
-        // ---------------------------
-        if (down & HidNpadButton_StickLUp)   playerAdjustVolume(+0.05f);
-        if (down & HidNpadButton_StickLDown) playerAdjustVolume(-0.05f);
-        if (down & HidNpadButton_StickLLeft) playerSetPan(playerGetPan() - 0.1f);
-        if (down & HidNpadButton_StickLRight)playerSetPan(playerGetPan() + 0.1f);
 
         // ---------------------------
         // Enabled DSP
@@ -280,11 +181,7 @@ int main()
             g_equalizer.setBand(selectedBand,
                 g_equalizer.getBand(selectedBand) + 1.0f);
         }
-        // ---------------------------
-        // Exit
-        // ---------------------------
-        if (down & HidNpadButton_Plus)
-            break;
+
         updateAutoEQ();
         playerUpdate();
 
@@ -313,13 +210,11 @@ int main()
 
         SDL_RenderPresent(renderer);
     }
-    //mp3FlushCacheIfNeeded();
-    mp3StopBackgroundScanner();  // MUST be first
-    playerStop();
 
+    mp3StopBackgroundScanner(); 
+    playerStop();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
-
     IMG_Quit();
     TTF_Quit();
     SDL_Quit();

@@ -5,3 +5,5 @@ void controllerInit();
 void controllerUpdate();
 
 PadState* controllerGetPad();
+
+void controllerHandlePlayerControls();
