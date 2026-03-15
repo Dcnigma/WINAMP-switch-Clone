@@ -9,6 +9,7 @@
 #include "playlist.h"
 #include "player.h"
 #include "player_state.h"
+#include "controller.h"
 
 #define FB_W 1920
 #define FB_H 1080
@@ -96,15 +97,23 @@ int main()
     mp3AddToPlaylist("romfs:/song.mp3");
     playlistScroll = 0;
 
-    PadState pad;
-    padConfigureInput(1, HidNpadStyleTag_NpadHandheld | HidNpadStyleTag_NpadFullKey);
-    padInitializeDefault(&pad);
+    controllerInit();
+    // PadState pad;
+    // padConfigureInput(1, HidNpadStyleTag_NpadHandheld | HidNpadStyleTag_NpadFullKey);
+    // padInitializeDefault(&pad);
 
     while (appletMainLoop())
     {
-        padUpdate(&pad);
-        u64 down = padGetButtonsDown(&pad);
-        u64 up   = padGetButtonsUp(&pad);
+        // padUpdate(&pad);
+        // u64 down = padGetButtonsDown(&pad);
+        // u64 up   = padGetButtonsUp(&pad);
+        //New controller inputs
+        controllerUpdate();
+
+        PadState* pad = controllerGetPad();
+
+        u64 down = padGetButtonsDown(pad);
+        u64 up   = padGetButtonsUp(pad);
         u64 now  = svcGetSystemTick();
         //mp3FlushCacheIfNeeded();
         updateStayAwakeLogic();
@@ -116,7 +125,7 @@ int main()
          // File browser open
          if (fileBrowserIsActive())
          {
-             fileBrowserUpdate(&pad);
+             fileBrowserUpdate(pad);
          }
          else if (down & HidNpadButton_B)
          {

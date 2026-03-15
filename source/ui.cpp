@@ -25,13 +25,15 @@ bool autoEQEnabled = false;
 static kiss_fftr_cfg fftCfg = NULL;
 static kiss_fft_cpx fftOut[FFT_SIZE/2];
 static float fftMag[FFT_SIZE/2];
-//static float bandValues[SPECTRUM_BARS];
+
 float bandValues[SPECTRUM_BARS] = {0};
-
+static bool fftInitialized = false;
+float spectrumPeaks[SPECTRUM_BARS] = {0};
 float peakValues[SPECTRUM_BARS] = {0};
-int   peakHold[SPECTRUM_BARS]   = {0};
-
+int peakHold[SPECTRUM_BARS] = {0};
 static float bandSmooth[SPECTRUM_BARS] = {0.0f};
+static const float PEAK_FALL_SPEED = 2.0f;
+float spectrumFallSpeed[SPECTRUM_BARS] = {0.0f};
 
 static int  scrollOffset = 0;
 static int  scrollTimer  = 0;
@@ -47,9 +49,6 @@ static int  uiPressTimer   = 0;
 
 static const int UI_PRESS_FRAMES = 6; // ~100ms at 60fps
 
-//static int spectrumValues[SPECTRUM_BARS] = {0};
-static float spectrumPeaks[SPECTRUM_BARS]  = {0}; // use float for smooth decay
-static const float PEAK_FALL_SPEED = 2.0f;        // pixels per frame
 
 // --- Player feature flags ---
 extern bool playerIsShuffleEnabled();
@@ -617,7 +616,7 @@ void uiInitFFT()
         fftCfg = kiss_fftr_alloc(FFT_SIZE, 0, NULL, NULL);
 }
 
-static bool fftInitialized = false;
+
 
 static void computeSpectrum()
 {
@@ -627,37 +626,70 @@ static void computeSpectrum()
     {
         float real = fftOut[i].r;
         float imag = fftOut[i].i;
+
         fftMag[i] = sqrtf(real*real + imag*imag);
     }
 
-    int binsPerBand = (FFT_SIZE/2) / SPECTRUM_BARS;
+    const float SMOOTHING = 0.18f;
 
-const float SMOOTHING = 0.15f; // 0.1 = very smooth, 0.4 = snappy
+    const float sampleRate = 44100.0f;
+    const float minFreq = 20.0f;
+    const float maxFreq = sampleRate / 2.0f;
 
-for (int b = 0; b < SPECTRUM_BARS; b++)
-{
-    float sum = 0.0f;
-    for (int j = 0; j < binsPerBand; j++)
-        sum += fftMag[b * binsPerBand + j];
+    static float autoGain = 1.0f;
 
-    float avg = sum / binsPerBand;
+    for (int b = 0; b < SPECTRUM_BARS; b++)
+    {
+        float t0 = (float)b / SPECTRUM_BARS;
+        float t1 = (float)(b + 1) / SPECTRUM_BARS;
 
-    avg = log10f(avg + 1.0f) * 0.6f;
+        float f0 = minFreq * powf(maxFreq / minFreq, t0);
+        float f1 = minFreq * powf(maxFreq / minFreq, t1);
 
-    if (avg > 1.0f) avg = 1.0f;
-    if (avg < 0.0f) avg = 0.0f;
+        int bin0 = (int)(f0 * FFT_SIZE / sampleRate);
+        int bin1 = (int)(f1 * FFT_SIZE / sampleRate);
 
-    // SMOOTHING
-    bandSmooth[b] += (avg - bandSmooth[b]) * SMOOTHING;
+        if (bin0 < 0) bin0 = 0;
+        if (bin1 >= FFT_SIZE/2) bin1 = FFT_SIZE/2 - 1;
+        if (bin1 <= bin0) bin1 = bin0 + 1;
 
-    bandValues[b] = bandSmooth[b];
-    float bassBoost = 1.0f + (float)(SPECTRUM_BARS - b) / SPECTRUM_BARS;
-    avg *= bassBoost * 0.9f;
+        float sum = 0.0f;
+        int count = 0;
+
+        for (int i = bin0; i <= bin1; i++)
+        {
+            sum += fftMag[i];
+            count++;
+        }
+
+        float avg = (count > 0) ? sum / count : 0.0f;
+
+        avg = log10f(avg + 1.0f) * 0.9f;
+
+        // automatic gain control
+        if (avg > autoGain)
+            autoGain = avg;
+        else
+            autoGain *= 0.995f;
+
+        avg /= (autoGain + 0.0001f);
+
+        if (avg > 1.0f) avg = 1.0f;
+        if (avg < 0.0f) avg = 0.0f;
+
+        // bass boost
+        float bassBoost = 1.0f + (float)(SPECTRUM_BARS - b) / SPECTRUM_BARS;
+        avg *= bassBoost * 0.9f;
+
+        if (avg > 1.0f) avg = 1.0f;
+
+        // smoothing
+        bandSmooth[b] += (avg - bandSmooth[b]) * SMOOTHING;
+
+        bandValues[b] = bandSmooth[b];
+    }
 }
 
-}
-
-// Call this in uiRender()
 static void drawWinampSpectrumVertical(SDL_Renderer* renderer, SDL_Rect rect, const float* bands)
 {
     if (!renderer || !bands) return;
@@ -1133,27 +1165,6 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     SDL_Rect Duration      = {45, 765,50,100};
     SDL_Rect TotPylDurat   = {109, 512,63, 358};
 
-    // --- Draw rectangles with transparency ---
-//    drawRect(renderer, topBar, 200,0,0,150);
-//    drawRect(renderer, mainPlayer, 0,100,200,150);
-//    drawRect(renderer, eqSection, 0,200,100,150);
-//    drawRect(renderer, playlist, 200,200,0,150);
-//    drawRect(renderer, progBar, 150,0,200,150);
-//    drawRect(renderer, songInfo, 100,100,100,150);
-//    drawRect(renderer, playtimeInfo, 0,200,100,150);
-//    drawRect(renderer, kbpsInfo, 200,200,0,150);
-//    drawRect(renderer, kHzInfo, 150,0,200,150);
-//    drawRect(renderer, playlistFiles, 100,100,100,150);
-
-//    drawRect(renderer, prevButton, 255,0,0,150);
-    // drawRect(renderer, nextButton, 0,255,0,150);
-    // drawRect(renderer, playButton, 255,0,0,150);
-    // drawRect(renderer, stopButton, 0,255,0,150);
-    // drawRect(renderer, pauseButton, 255,0,0,150);
-    // drawRect(renderer, ejectButton, 0,255,0,150);
-//    drawRect(renderer, shuffleButton, 255,0,0,150);
-//    drawRect(renderer, repeatButton, 0,255,0,150);
-
     drawRect(renderer, eqBand1, 0,0,255,150);
     drawRect(renderer, eqBand2, 0,255,255,150);
     drawRect(renderer, eqBand3, 255,0,255,150);
@@ -1191,9 +1202,6 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
 
     drawRect(renderer, eqPreset3, 100,100,100,150);
 
-//    drawRect(renderer, volumeSlider, 150,150,0,150);
-//    drawRect(renderer, panSlider, 0,150,150,150);
-
     drawPanSlider(renderer, texPan, panSlider);
 
     drawRect(renderer, addPlaylist, 150,150,0,150);
@@ -1201,20 +1209,42 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawRect(renderer, selPlaylist, 150,150,0,150);
     drawRect(renderer, miscPlaylist, 0,150,150,150);
     drawRect(renderer, ListOptions, 150,150,0,150);
-//    drawRect(renderer, Duration, 150,150,0,150);
-//    drawRect(renderer, TotPylDurat, 255,0,0,150);
-
-    // Example rectangle in your UI
-//    SDL_Rect spectrumRect = {1592, 92, 93, 306};
-//    drawWinampSpectrumVertical(renderer, spectrumRect);
 
     computeSpectrum();
-
-
 
     SDL_Rect spectrumRect = {1592, 90, 93, 306};
     drawWinampSpectrumVertical(renderer, spectrumRect, bandValues);
 
+    for (int i = 0; i < SPECTRUM_BARS; i++)
+    {
+        float v = bandValues[i];
+
+        if (v >= spectrumPeaks[i])
+        {
+            spectrumPeaks[i] = v;
+
+            peakHold[i] = 18;
+
+            spectrumFallSpeed[i] = 0.0f;
+        }
+        else
+        {
+            if (peakHold[i] > 0)
+            {
+                peakHold[i]--;
+            }
+            else
+            {
+                // gravity acceleration
+                spectrumFallSpeed[i] += 0.0025f;
+
+                spectrumPeaks[i] -= spectrumFallSpeed[i];
+
+                if (spectrumPeaks[i] < 0)
+                    spectrumPeaks[i] = 0;
+            }
+        }
+    }
 
     SDL_Color green = {0, 255, 0, 255};
 //    SDL_Color white = {0, 255, 255, 255};
