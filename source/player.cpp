@@ -13,6 +13,10 @@
 #include <algorithm>
 #include <random>
 
+#include "settings.h"
+#include "settings_state.h"
+
+
 /* ---------------------------------------------------- */
 /* CONFIG                                               */
 /* ---------------------------------------------------- */
@@ -233,6 +237,17 @@ void playerPlay(int index)
         (len > 0) ? (int)(len / rate) : 0;
 }
 
+void playerStartCrossfade()
+{
+    if (!g_settings.crossfadeEnabled)
+    {
+        playerNext();
+        return;
+    }
+
+    // Temporary fallback
+    playerNext();
+}
 void playerStop()
 {
     stopPlaybackInternal();

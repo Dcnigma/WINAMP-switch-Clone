@@ -11,6 +11,10 @@
 #include "player_state.h"
 #include "controller.h"
 
+#include "settings.h"
+#include "settings_state.h"
+
+
 #define FB_W 1920
 #define FB_H 1080
 
@@ -96,7 +100,7 @@ int main()
         updateStayAwakeLogic();
         //New controller inputs
         controllerUpdate();
-        controllerHandlePlayerControls();
+        //controllerHandlePlayerControls();
         PadState* pad = controllerGetPad();
         u64 down = padGetButtonsDown(pad);
         u64 up   = padGetButtonsUp(pad);
@@ -127,6 +131,16 @@ int main()
                  playerPlay(playlistGetCurrentIndex());
          }
 
+         if (down & HidNpadButton_StickL)
+             settingsOpen();
+         if (settingsIsOpen())
+         {
+             settingsHandleInput(pad);
+         }
+         else
+         {
+             controllerHandlePlayerControls();
+         }
         updateAutoEQ();
         playerUpdate();
 
@@ -152,7 +166,7 @@ int main()
 
         renderPlaylist(renderer, font);
         fileBrowserRender(renderer, font);
-
+        settingsRender(renderer, font);
         SDL_RenderPresent(renderer);
     }
 

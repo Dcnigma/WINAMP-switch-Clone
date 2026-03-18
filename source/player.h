@@ -9,6 +9,7 @@ extern "C" {
 void playerInit();
 void playerPlay(int index);
 void playerStop();
+void playerStartCrossfade();
 //void playerNext();
 //void playerPrev();
 bool playerIsPlaying();
