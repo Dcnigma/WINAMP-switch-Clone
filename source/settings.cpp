@@ -58,7 +58,10 @@ void settingsHandleInput(PadState* pad)
                 g_settings.crossfadeEnabled =
                     !g_settings.crossfadeEnabled;
                 break;
-
+            case SETTING_CROSSFADE_TIME:
+                // Optional: reset to default
+                g_settings.crossfadeSeconds = 3.0f;
+                break;
             case SETTING_BACK:
                 settingsClose();
                 break;
@@ -131,7 +134,25 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
             surf->w,
             surf->h
         };
+        if (i == SETTING_CROSSFADE_TIME)
+        {
+            int barX = 950;
+            int barY = y + 40;
+            int barW = 250;
+            int barH = 10;
 
+            // background
+            SDL_SetRenderDrawColor(renderer, 80,80,80,255);
+            SDL_Rect bg = { barX, barY, barW, barH };
+            SDL_RenderFillRect(renderer, &bg);
+
+            // fill
+            float t = (g_settings.crossfadeSeconds - 0.5f) / (10.0f - 0.5f);
+
+            SDL_SetRenderDrawColor(renderer, 0,200,255,255);
+            SDL_Rect fill = { barX, barY, (int)(barW * t), barH };
+            SDL_RenderFillRect(renderer, &fill);
+        }
         SDL_RenderCopy(renderer, tex, NULL, &dst);
 
         SDL_FreeSurface(surf);
