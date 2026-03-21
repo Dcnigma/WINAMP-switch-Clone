@@ -122,19 +122,6 @@ static bool openNextDecoder(int index)
     return true;
 }
 
-// static void playerAdvanceTrackIndexOnly()
-// {
-//     g_state.trackIndex++;
-//
-//     if (g_state.trackIndex >= playlistGetCount())
-//     {
-//         if (g_state.repeat == REPEAT_ALL)
-//             g_state.trackIndex = 0;
-//         else
-//             g_state.trackIndex = -1;
-//     }
-// }
-
 void playerEnqueue(int index)
 {
     if (index < 0 || index >= playlistGetCount())
@@ -671,8 +658,14 @@ void playerUpdate()
         int err = mpg123_read(mh, buffer, sizeof(buffer), &done);
         if (done == 0) {
             if (err == MPG123_DONE)
+            {
                 g_waitForDrain = true;
-                g_playbackState = STATE_DRAINING;
+
+                if (g_playbackState != STATE_CROSSFADING)
+                {
+                    g_playbackState = STATE_DRAINING;
+                }
+            }
             break;
         }
 
@@ -689,18 +682,7 @@ void playerUpdate()
             frames,
             g_state.channels
         );
-        // if (g_state.repeat == REPEAT_ONE && g_state.trackIndex >= 0)
-        // {
-        //     playerPlay(g_state.trackIndex);
-        //     return;
-        // }
-        // if (g_state.repeat == REPEAT_ONE)
-        //         return;
-        // {
-        //     playerPlay(g_state.trackIndex);
-        //     return;
-        // }
-        //if (g_crossfading && mh_next)
+
         if (g_playbackState == STATE_CROSSFADING && mh_next)
         {
             unsigned char buffer2[DECODE_BUFFER];
@@ -730,8 +712,6 @@ void playerUpdate()
                 float t = g_crossfadeProgress / duration;
                 if (!g_metadataSwitched && t >= 0.5f)
                 {
-                    //int nextIndex = playerPeekNextIndex();
-                    //int nextIndex = g_crossfadeTargetIndex;
                     int nextIndex = (g_crossfadeTargetIndex >= 0)
                       ? g_crossfadeTargetIndex
                       : playerPeekNextIndex();
@@ -773,37 +753,11 @@ void playerUpdate()
                         g_playbackState = STATE_PLAYING;
                         g_waitForDrain = false;
 
-                        // NOW we are actually switching tracks → update index properly
-                        //int newIndex = g_state.trackIndex + 1;
-
-                        //int nextIndex = playerPeekNextIndex();
-                        //int nextIndex = g_crossfadeTargetIndex;
                         int nextIndex = (g_crossfadeTargetIndex >= 0)
                           ? g_crossfadeTargetIndex
                           : playerPeekNextIndex();
-                        playerCommitNextTrack(nextIndex);
-                        // if (nextIndex < 0)
-                        // {
-                        //     playerStop();
-                        //     return;
-                        // }
-                        // QUEUE
-
-                        // if (!g_playQueue.empty())
-                        // {
-                        //     g_playQueue.erase(g_playQueue.begin());
-                        // }
-                        // // SHUFFLE
-                        // else if (g_state.shuffle && !g_shufflePool.empty())
-                        // {
-                        //     g_shuffleHistory.push_back(g_state.trackIndex);
-                        //     g_shufflePool.pop_back();
-                        // }
-
-                        // g_state.trackIndex = newIndex;
-                        // playlistSetCurrentIndex(newIndex); //  keep UI in sync
-                        //
-                        //  Start new track at crossfade position
+                          playerCommitNextTrack(nextIndex);
+                          g_crossfadeTargetIndex = -1;
                         samplesPlayed = (uint64_t)(g_crossfadeProgress * g_state.sampleRate);
                         g_state.elapsedSeconds = (int)g_crossfadeProgress;
 
@@ -822,8 +776,6 @@ void playerUpdate()
             {
                 if (g_settings.crossfadeSeconds <= 0.01f)
                 {
-                    //int nextIndex = playerPeekNextIndex();
-                    //int nextIndex = g_crossfadeTargetIndex;
                     int nextIndex = (g_crossfadeTargetIndex >= 0)
                       ? g_crossfadeTargetIndex
                       : playerPeekNextIndex();
@@ -872,19 +824,16 @@ void playerUpdate()
     }
     int remaining =
         g_state.durationSeconds - g_state.elapsedSeconds;
-
-    // if (!g_crossfading &&
-    //     g_settings.crossfadeEnabled &&
-    //     remaining <= (int)g_settings.crossfadeSeconds)
-    if (g_playbackState == STATE_PLAYING &&
+        if (g_playbackState == STATE_PLAYING &&
         g_settings.crossfadeEnabled &&
         remaining <= (int)g_settings.crossfadeSeconds)
     {
         playerStartCrossfade();
     }
     // Track finished AND buffer drained → next song
-    //if (g_waitForDrain && audio.availableRead() == 0)
-    if (g_playbackState == STATE_DRAINING && audio.availableRead() == 0)
+    if (g_playbackState == STATE_DRAINING &&
+    !g_crossfading &&
+    audio.availableRead() == 0)
     {
         g_waitForDrain = false;
 
