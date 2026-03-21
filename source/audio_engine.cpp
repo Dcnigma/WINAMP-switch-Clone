@@ -27,6 +27,7 @@ void AudioEngine::start() {
 
 void AudioEngine::stop() {
     if (device) SDL_PauseAudioDevice(device, 1);
+    
 }
 
 void AudioEngine::shutdown() {
