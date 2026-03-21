@@ -15,15 +15,12 @@
 
 #include "settings.h"
 #include "settings_state.h"
-
-
 /* ---------------------------------------------------- */
 /* CONFIG                                               */
 /* ---------------------------------------------------- */
 #define FFT_SIZE 1024
 #define DECODE_BUFFER 8192   // bytes (mpg123 output)
 #define SHUFFLE_MEMORY 5
-
 /* ---------------------------------------------------- */
 /* GLOBALS                                              */
 /* ---------------------------------------------------- */
@@ -33,6 +30,7 @@ static std::vector<int> g_playQueue;
 static bool g_waitForDrain = false;
 static bool g_metadataSwitched = false;
 static int g_crossfadeTargetIndex = -1;
+static uint64_t samplesPlayedNext = 0;
 
 enum PlaybackState
 {
@@ -41,38 +39,26 @@ enum PlaybackState
     STATE_CROSSFADING,
     STATE_DRAINING
 };
-
 static PlaybackState g_playbackState = STATE_STOPPED;
-
-/* Forward declarations */
-/*shuffle*/
-
+/* Shuffel */
 static void stopPlaybackInternal();
 static void rebuildShufflePool();
 static std::vector<int> g_shufflePool;
 static std::vector<int> g_shuffleHistory;
-
 /* FFT */
 float g_fftInput[FFT_SIZE] = {0};
 static int fftWritePos = 0;
-
 /* AUDIO TIME TRACKING */
 static uint64_t samplesPlayed = 0;
-
 /* MIXING */
 static float g_volume   = 1.0f;
 static float g_pan      = 0.0f;
 static float g_leftMix  = 1.0f;
 static float g_rightMix = 1.0f;
-
 /* Crossfader*/
-
 static mpg123_handle* mh_next = nullptr;
-
 static bool g_crossfading = false;
 static float g_crossfadeProgress = 0.0f;
-
-
 static void playerCommitNextTrack(int nextIndex)
 {
     if (nextIndex < 0)
@@ -80,7 +66,6 @@ static void playerCommitNextTrack(int nextIndex)
         playerStop();
         return;
     }
-
     if (!g_playQueue.empty())
     {
         g_playQueue.erase(g_playQueue.begin());
@@ -154,15 +139,12 @@ static int playerPeekNextIndex()
     int count = playlistGetCount();
     if (count == 0)
         return -1;
-
     // QUEUE FIRST
     if (!g_playQueue.empty())
         return g_playQueue.front();
-
     // REPEAT ONE
     if (g_state.repeat == REPEAT_ONE && g_state.trackIndex >= 0)
         return g_state.trackIndex;
-
     // SHUFFLE
     if (g_state.shuffle)
     {
@@ -179,23 +161,6 @@ static int playerPeekNextIndex()
               return candidate;
           }
       }
-      // while (!g_shufflePool.empty())
-      // {
-      //     int candidate = g_shufflePool.back();
-      //
-      //     // avoid recently played
-      //     if (std::find(
-      //             g_shuffleHistory.begin(),
-      //             g_shuffleHistory.end(),
-      //             candidate
-      //         ) == g_shuffleHistory.end())
-      //     {
-      //         return candidate;
-      //     }
-      //
-      //     // skip it
-      //     g_shufflePool.pop_back();
-      // }
 
         if (g_state.repeat == REPEAT_ALL)
         {
@@ -417,17 +382,14 @@ void playerStartCrossfade()
         playerNext();
         return;
     }
-
-//    int nextIndex = playerPeekNextIndex();
       g_crossfadeTargetIndex = playerPeekNextIndex();
-      //int nextIndex = g_crossfadeTargetIndex;
       if (g_crossfadeTargetIndex < 0)
       {
           playerStop();
           return;
       }
 
-      int nextIndex = g_crossfadeTargetIndex;
+  int nextIndex = g_crossfadeTargetIndex;
     if (nextIndex < 0)
         return;
 
@@ -436,7 +398,7 @@ void playerStartCrossfade()
         playerNext();
         return;
     }
-    samplesPlayed = samplesPlayed; // keep current position (no-op but explicit)
+    samplesPlayedNext = 0;
     g_crossfading = true;
     g_playbackState = STATE_CROSSFADING;
     g_crossfadeProgress = 0.0f;
@@ -496,34 +458,18 @@ void playerToggleShuffle()
         g_shuffleHistory.clear();
     }
 }
-
-// static void stopPlaybackInternal()
-// {
-//     audio.stop();
-//     audio.shutdown();
-//
-//     if (mh) {
-//         mpg123_close(mh);
-//         mpg123_delete(mh);
-//         mh = nullptr;
-//     }
-//
-//     samplesPlayed = 0;
-//     g_waitForDrain = false;
-// }
-
 static void stopPlaybackInternal()
 {
     // Stop playback immediately
     audio.stop();
 
-    // 🔥 Reset crossfade + decoder state
+    //  Reset crossfade + decoder state
     g_crossfading = false;
     g_playbackState = STATE_STOPPED;
     g_crossfadeTargetIndex = -1;
     g_metadataSwitched = false;
 
-    // 🔥 Kill next decoder if exists
+    // Kill next decoder if exists
     if (mh_next)
     {
         mpg123_close(mh_next);
@@ -531,14 +477,14 @@ static void stopPlaybackInternal()
         mh_next = nullptr;
     }
 
-    // 🔥 Close current decoder
+    // Close current decoder
     if (mh) {
         mpg123_close(mh);
         mpg123_delete(mh);
         mh = nullptr;
     }
 
-    // 🔥 HARD RESET AUDIO (this is the important part)
+    // HARD RESET AUDIO (this is the important part)
     audio.shutdown();
 
     samplesPlayed = 0;
@@ -555,8 +501,6 @@ bool playerIsRepeatEnabled()
     return g_state.repeat != REPEAT_OFF;
 }
 
-
-
 void playerCycleRepeat()
 {
     switch (g_state.repeat)
@@ -566,8 +510,6 @@ void playerCycleRepeat()
         case REPEAT_ONE: g_state.repeat = REPEAT_OFF; break;
     }
 }
-
-
 
 float playerGetPosition()
 {
@@ -735,7 +677,7 @@ void playerUpdate()
         {
             if (g_playbackState == STATE_CROSSFADING && mh_next)
             {
-                // 🔥 KEEP GOING — let next track drive audio
+                // KEEP GOING — let next track drive audio
                 unsigned char buffer2[DECODE_BUFFER];
                 size_t done2 = 0;
 
@@ -744,7 +686,7 @@ void playerUpdate()
                 if (done2 > 0)
                 {
                     int frames2 = done2 / (sizeof(int16_t) * g_state.channels);
-
+                    samplesPlayedNext += frames2;
                     static float floatPCM2[4096 * 2];
 
                     processSamplesToFloat(
@@ -759,7 +701,7 @@ void playerUpdate()
                     g_crossfadeProgress +=
                         (float)frames2 / g_state.sampleRate;
 
-                    continue; // 🔥 don't break!
+                    continue;
                 }
             }
 
@@ -777,9 +719,17 @@ void playerUpdate()
         }
 
         int frames = done / (sizeof(int16_t) * g_state.channels);
-        samplesPlayed += frames;
-        g_state.elapsedSeconds =
-            (int)(samplesPlayed / g_state.sampleRate);
+        if (g_crossfading)
+        {
+            g_state.elapsedSeconds =
+                (int)(samplesPlayedNext / g_state.sampleRate);
+        }
+        else
+        {
+            samplesPlayed += frames;
+            g_state.elapsedSeconds =
+                (int)(samplesPlayed / g_state.sampleRate);
+        }
 
         static float floatPCM[4096 * 2];
         processSamplesToFloat(
@@ -799,7 +749,7 @@ void playerUpdate()
             if (done2 > 0)
             {
                 int frames2 = done2 / (sizeof(int16_t) * g_state.channels);
-
+                samplesPlayedNext += frames2;
                 static float floatPCM2[4096 * 2];
 
                 processSamplesToFloat(
@@ -816,27 +766,11 @@ void playerUpdate()
                 if (duration < 0.01f) duration = 0.01f;
 
                 float t = g_crossfadeProgress / duration;
-                // if (!g_metadataSwitched && t >= 0.5f)
-                // {
-                //   if (g_crossfadeTargetIndex < 0)
-                //   {
-                //       playerStop();
-                //       return;
-                //   }
-                //
-                //   int nextIndex = g_crossfadeTargetIndex;
-                //     if (nextIndex < 0)
-                //     {
-                //         playerStop();
-                //         return;
-                //     }
-                //
-                //     if (nextIndex >= 0)
-                //         playlistSetCurrentIndex(nextIndex);
-                //
-                //     g_metadataSwitched = true;
-                // }
-                //playerCommitNextTrack(nextIndex);
+                if (!g_metadataSwitched && t >= 0.5f && g_crossfadeTargetIndex >= 0)
+                {
+                    playerCommitNextTrack(g_crossfadeTargetIndex);
+                    g_metadataSwitched = true;
+                }
                 if (t > 1.0f) t = 1.0f;
 
                 float fadeOut = cosf(t * 1.5707963f); // cos(t * pi/2)
@@ -859,7 +793,7 @@ void playerUpdate()
                         mh = mh_next;
                         mh_next = nullptr;
 
-                        // 🔥 FIX: update format for new track
+                        // FIX: update format for new track
                         long rate;
                         int ch, enc;
 
@@ -879,13 +813,10 @@ void playerUpdate()
                             return;
                         }
 
-                        int nextIndex = g_crossfadeTargetIndex;
-                          playerCommitNextTrack(nextIndex);
-                          g_crossfadeTargetIndex = -1;
-                        // samplesPlayed = (uint64_t)(g_crossfadeProgress * g_state.sampleRate);
-                        // g_state.elapsedSeconds = (int)g_crossfadeProgress;
-                        samplesPlayed = 0;
-                        g_state.elapsedSeconds = 0;
+                        g_crossfadeTargetIndex = -1;
+                        samplesPlayed = samplesPlayedNext;
+                        g_state.elapsedSeconds =
+                            (int)(samplesPlayed / g_state.sampleRate);
                         off_t len = mpg123_length(mh);
                         g_state.durationSeconds =
                             (len > 0) ? (int)(len / g_state.sampleRate) : 0;
@@ -916,7 +847,7 @@ void playerUpdate()
                     mh = mh_next;
                     mh_next = nullptr;
 
-                    // 🔥 FIX: update format for new track
+                    // FIX: update format for new track
                     long rate;
                     int ch, enc;
 
@@ -925,9 +856,6 @@ void playerUpdate()
                         g_state.sampleRate = rate;
                         g_state.channels   = ch;
                     }
-
-                    playerCommitNextTrack(nextIndex);
-
                     samplesPlayed = 0;
                     g_state.elapsedSeconds = 0;
 
