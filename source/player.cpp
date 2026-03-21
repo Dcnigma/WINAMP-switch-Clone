@@ -28,8 +28,10 @@
 /* ---------------------------------------------------- */
 static AudioEngine audio;
 static mpg123_handle* mh = nullptr;
-
+static std::vector<int> g_playQueue;
 static bool g_waitForDrain = false;
+static bool g_metadataSwitched = false;
+static int g_crossfadeTargetIndex = -1;
 
 /* Forward declarations */
 /*shuffle*/
@@ -59,6 +61,28 @@ static mpg123_handle* mh_next = nullptr;
 static bool g_crossfading = false;
 static float g_crossfadeProgress = 0.0f;
 
+
+static void playerCommitNextTrack(int nextIndex)
+{
+    if (nextIndex < 0)
+    {
+        playerStop();
+        return;
+    }
+
+    if (!g_playQueue.empty())
+    {
+        g_playQueue.erase(g_playQueue.begin());
+    }
+    else if (g_state.shuffle && !g_shufflePool.empty())
+    {
+        g_shuffleHistory.push_back(g_state.trackIndex);
+        g_shufflePool.pop_back();
+    }
+
+    g_state.trackIndex = nextIndex;
+    playlistSetCurrentIndex(nextIndex);
+}
 
 static bool openNextDecoder(int index)
 {
@@ -101,6 +125,14 @@ static void playerAdvanceTrackIndexOnly()
     }
 }
 
+void playerEnqueue(int index)
+{
+    if (index < 0 || index >= playlistGetCount())
+        return;
+
+    g_playQueue.push_back(index);
+}
+
 static void rebuildShufflePool()
 {
     g_shufflePool.clear();
@@ -113,6 +145,58 @@ static void rebuildShufflePool()
     std::shuffle(g_shufflePool.begin(), g_shufflePool.end(), rng);
 }
 
+static int playerPeekNextIndex()
+{
+    int count = playlistGetCount();
+    if (count == 0)
+        return -1;
+
+    // QUEUE FIRST
+    if (!g_playQueue.empty())
+        return g_playQueue.front();
+
+    // REPEAT ONE
+    if (g_state.repeat == REPEAT_ONE && g_state.trackIndex >= 0)
+        return g_state.trackIndex;
+
+    // SHUFFLE
+    if (g_state.shuffle)
+    {
+        if (!g_shufflePool.empty())
+            return g_shufflePool.back();
+
+        if (g_state.repeat == REPEAT_ALL)
+        {
+            rebuildShufflePool();
+
+            auto it = std::find(
+                g_shufflePool.begin(),
+                g_shufflePool.end(),
+                g_state.trackIndex
+            );
+            if (it != g_shufflePool.end())
+                g_shufflePool.erase(it);
+
+            if (!g_shufflePool.empty())
+                return g_shufflePool.back();
+        }
+
+        return -1;
+    }
+
+    // NORMAL
+    int next = g_state.trackIndex + 1;
+
+    if (next >= count)
+    {
+        if (g_state.repeat == REPEAT_ALL)
+            return 0;
+        else
+            return -1;
+    }
+
+    return next;
+}
 /* ---------------------------------------------------- */
 /* PLAYER STATE                                         */
 /* ---------------------------------------------------- */
@@ -129,8 +213,6 @@ PlayerState g_state = {
     .shuffle = false,
     .repeat  = REPEAT_OFF
 };
-
-
 
 /* ---------------------------------------------------- */
 /* DSP                                                  */
@@ -281,16 +363,13 @@ void playerPlay(int index)
 
     g_waitForDrain = false;
 
-//    playerAdvanceTrackIndexOnly();
     playlistSetCurrentIndex(index);
-      //playlistSetCurrentIndex(g_state.trackIndex);
     off_t len = mpg123_length(mh);
     g_state.durationSeconds =
         (len > 0) ? (int)(len / g_state.sampleRate) : 0;
 
     samplesPlayed = 0;
     g_state.elapsedSeconds = 0;
-  //  audio.clear();
 }
 
 void playerStartCrossfade()
@@ -301,15 +380,11 @@ void playerStartCrossfade()
         return;
     }
 
-    int nextIndex = g_state.trackIndex + 1;
-
-    if (nextIndex >= playlistGetCount())
-    {
-        if (g_state.repeat == REPEAT_ALL)
-            nextIndex = 0;
-        else
-            return;
-    }
+//    int nextIndex = playerPeekNextIndex();
+      g_crossfadeTargetIndex = playerPeekNextIndex();
+      int nextIndex = g_crossfadeTargetIndex;
+    if (nextIndex < 0)
+        return;
 
     if (!openNextDecoder(nextIndex))
     {
@@ -319,21 +394,8 @@ void playerStartCrossfade()
 
     g_crossfading = true;
     g_crossfadeProgress = 0.0f;
-
+    g_metadataSwitched = false;   // 🔥 IMPORTANT
 }
-
-// void playerStop()
-// {
-//     stopPlaybackInternal();
-//     spectrumReset();
-//
-//     g_shuffleHistory.clear();
-//     g_shufflePool.clear();
-//
-//     g_state.playing = false;
-//     g_state.paused  = false;
-//     g_state.trackIndex = -1;
-// }
 
 void playerStop()
 {
@@ -458,6 +520,16 @@ void playerSeek(float targetSeconds)
     }
 
     audio.setPaused(g_state.paused);
+    g_crossfading = false;
+    g_waitForDrain = false;
+    g_crossfadeTargetIndex = -1;
+    g_metadataSwitched = false;
+    if (mh_next)
+    {
+        mpg123_close(mh_next);
+        mpg123_delete(mh_next);
+        mh_next = nullptr;
+    }
 }
 
 void playerNext()
@@ -465,6 +537,15 @@ void playerNext()
     int count = playlistGetCount();
     if (count == 0)
         return;
+
+    // QUEUE HAS PRIORITY
+    if (!g_playQueue.empty())
+    {
+        int next = g_playQueue.front();
+        g_playQueue.erase(g_playQueue.begin());
+        playerPlay(next);
+        return;
+    }
 
     // REPEAT ONE → immediately restart same track
     if (g_state.repeat == REPEAT_ONE && g_state.trackIndex >= 0)
@@ -498,7 +579,6 @@ void playerNext()
             else
             {
                 playerStop();
-                //stopPlaybackInternal();
                 return;
             }
         }
@@ -591,7 +671,17 @@ void playerUpdate()
             frames,
             g_state.channels
         );
-
+        // if (g_state.repeat == REPEAT_ONE && g_state.trackIndex >= 0)
+        // {
+        //     playerPlay(g_state.trackIndex);
+        //     return;
+        // }
+        // if (g_state.repeat == REPEAT_ONE)
+        //         return;
+        // {
+        //     playerPlay(g_state.trackIndex);
+        //     return;
+        // }
         if (g_crossfading && mh_next)
         {
             unsigned char buffer2[DECODE_BUFFER];
@@ -619,10 +709,26 @@ void playerUpdate()
                 if (duration < 0.01f) duration = 0.01f;
 
                 float t = g_crossfadeProgress / duration;
+                if (!g_metadataSwitched && t >= 0.5f)
+                {
+                    //int nextIndex = playerPeekNextIndex();
+                    int nextIndex = g_crossfadeTargetIndex;
+                    if (nextIndex < 0)
+                    {
+                        playerStop();
+                        return;
+                    }
+
+                    if (nextIndex >= 0)
+                        playlistSetCurrentIndex(nextIndex);
+
+                    g_metadataSwitched = true;
+                }
+
                 if (t > 1.0f) t = 1.0f;
 
-                float fadeOut = 1.0f - t;
-                float fadeIn  = t;
+                float fadeOut = cosf(t * 1.5707963f); // cos(t * pi/2)
+                float fadeIn  = sinf(t * 1.5707963f);
 
                 for (int i = 0; i < mixFrames * 2; i++)
                 {
@@ -645,19 +751,32 @@ void playerUpdate()
                         g_waitForDrain = false;
 
                         // NOW we are actually switching tracks → update index properly
-                        int newIndex = g_state.trackIndex + 1;
+                        //int newIndex = g_state.trackIndex + 1;
 
-                        if (newIndex >= playlistGetCount())
-                        {
-                            if (g_state.repeat == REPEAT_ALL)
-                                newIndex = 0;
-                            else
-                                newIndex = -1;
-                        }
+                        //int nextIndex = playerPeekNextIndex();
+                        int nextIndex = g_crossfadeTargetIndex;
+                        playerCommitNextTrack(nextIndex);
+                        // if (nextIndex < 0)
+                        // {
+                        //     playerStop();
+                        //     return;
+                        // }
+                        // QUEUE
 
-                        g_state.trackIndex = newIndex;
-                        playlistSetCurrentIndex(newIndex); //  keep UI in sync
+                        // if (!g_playQueue.empty())
+                        // {
+                        //     g_playQueue.erase(g_playQueue.begin());
+                        // }
+                        // // SHUFFLE
+                        // else if (g_state.shuffle && !g_shufflePool.empty())
+                        // {
+                        //     g_shuffleHistory.push_back(g_state.trackIndex);
+                        //     g_shufflePool.pop_back();
+                        // }
 
+                        // g_state.trackIndex = newIndex;
+                        // playlistSetCurrentIndex(newIndex); //  keep UI in sync
+                        //
                         //  Start new track at crossfade position
                         samplesPlayed = (uint64_t)(g_crossfadeProgress * g_state.sampleRate);
                         g_state.elapsedSeconds = (int)g_crossfadeProgress;
@@ -671,9 +790,54 @@ void playerUpdate()
 
         audio.pushPCM(floatPCM, frames * 2);
 
-        if (err == MPG123_DONE) {
-            if (!g_crossfading && mh_next == nullptr)
+        if (err == MPG123_DONE)
+        {
+            if (!g_crossfading)
+            {
+                if (g_settings.crossfadeSeconds <= 0.01f)
+                {
+                    //int nextIndex = playerPeekNextIndex();
+                    int nextIndex = g_crossfadeTargetIndex;
+                    if (nextIndex < 0)
+                    {
+                        playerStop();
+                        return;
+                    }
+
+                    if (openNextDecoder(nextIndex))
+                    {
+                        mpg123_close(mh);
+                        mpg123_delete(mh);
+
+                        mh = mh_next;
+                        mh_next = nullptr;
+
+                        // consume queue/shuffle
+                        if (!g_playQueue.empty())
+                        {
+                            g_playQueue.erase(g_playQueue.begin());
+                        }
+                        else if (g_state.shuffle)
+                        {
+                            if (g_state.trackIndex >= 0)
+                                g_shuffleHistory.push_back(g_state.trackIndex);
+
+                            if (!g_shufflePool.empty())
+                                g_shufflePool.pop_back();
+                        }
+
+                        g_state.trackIndex = nextIndex;
+                        playlistSetCurrentIndex(nextIndex);
+
+                        samplesPlayed = 0;
+                        g_state.elapsedSeconds = 0;
+
+                        return;
+                    }
+                }
+
                 g_waitForDrain = true;
+            }
         }
 
     }
@@ -691,7 +855,7 @@ void playerUpdate()
     {
         g_waitForDrain = false;
 
-        if (!g_crossfading)   
+        if (!g_crossfading)
             playerNext();
     }
 }

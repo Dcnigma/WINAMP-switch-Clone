@@ -1266,10 +1266,11 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
                       ALIGN_CENTER);
 
 int currentTrackIndex = playerGetCurrentTrackIndex();
+//int currentTrackIndex = playlistGetCurrentIndex();
+//int currentTrackIndex = playlistSetCurrentIndex(nextIndex);
 if (currentTrackIndex >= 0)
 {
     const Mp3MetadataEntry* md = mp3GetTrackMetadata(currentTrackIndex);
-
         if (md)
         {
             char kbpsText[8];
