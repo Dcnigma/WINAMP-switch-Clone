@@ -11,7 +11,7 @@ void playerPlay(int index);
 void playerStop();
 void playerStartCrossfade();
 //void playerNext();
-//void playerPrev();
+void playerPrev();
 bool playerIsPlaying();
 void playerUpdate();
 
