@@ -123,20 +123,26 @@ void updateAutoEQ()
 
         energy /= BARS_PER_BAND;
 
-        // smooth movement
-        smoothed[b] = smoothed[b] * 0.94f + energy * 0.06f;
+        smoothed[b] = smoothed[b] * 0.97f + energy * 0.03f;
 
-        float db = (smoothed[b] - 0.5f) * 12.0f;
+        // invert behavior (flatten instead of boost)
+        float db = (0.5f - smoothed[b]);
 
-        if (db > 6.0f) db = 6.0f;
-        if (db < -6.0f) db = -6.0f;
+        // nonlinear response
+        db = db * std::abs(db) * 18.0f;
 
+        // prefer cuts
+        if (db > 0)
+            db *= 0.6f;
+
+        // clamp
+        db = std::clamp(db, -6.0f, 6.0f);
+
+        // smooth band movement
         float current = g_equalizer.getBand(b + 1);
-
         float diff = db - current;
 
-        if (diff > 0.4f) diff = 0.4f;
-        if (diff < -0.4f) diff = -0.4f;
+        diff = std::clamp(diff, -0.3f, 0.3f);
 
         g_equalizer.setBand(b + 1, current + diff);
     }
