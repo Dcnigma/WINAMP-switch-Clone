@@ -94,7 +94,7 @@ static bool openNextDecoder(int index)
     mh_next = mpg123_new(nullptr, nullptr);
     if (!mh_next)
         return false;
-
+    mpg123_param(mh_next, MPG123_GAPLESS, 1, 0);
     mpg123_param(mh_next, MPG123_ADD_FLAGS, MPG123_SKIP_ID3V2, 0);
     mpg123_param(mh_next, MPG123_FORCE_STEREO, 1, 0);
 
@@ -313,6 +313,7 @@ void playerPlay(int index)
         audio.shutdown();
     };
 
+    mpg123_param(mh, MPG123_GAPLESS, 1, 0);
     mpg123_param(mh, MPG123_ADD_FLAGS, MPG123_SKIP_ID3V2, 0);
     mpg123_param(mh, MPG123_FORCE_STEREO, 1, 0);
 
@@ -620,6 +621,7 @@ void playerUpdate()
         /* ===================================================== */
         if (g_playbackState == STATE_PLAYING)
         {
+
             if (done > 0)
             {
                 int frames = done / (sizeof(int16_t) * g_state.channels);
@@ -638,16 +640,70 @@ void playerUpdate()
 
                 audio.pushPCM(floatPCM, frames * 2);
             }
+            int samplesRemaining =
+                (g_state.durationSeconds * g_state.sampleRate) - samplesPlayed;
+
+            int preloadSamples = g_state.sampleRate; // 1 second
+
+            static bool preloadAttempted = false;
+
+            if (!g_settings.crossfadeEnabled &&
+                mh_next == nullptr &&
+                !preloadAttempted &&
+                samplesRemaining <= preloadSamples)
+            {
+                int nextIndex = playerPeekNextIndex();
+                if (nextIndex >= 0)
+                {
+                    if (openNextDecoder(nextIndex))
+                        preloadAttempted = true;
+                }
+            }
 
             if (err == MPG123_DONE)
             {
-                g_playbackState = STATE_DRAINING;
-                break;
+                int nextIndex = playerPeekNextIndex();
+
+                if (nextIndex >= 0 && openNextDecoder(nextIndex))
+                {
+                    // instant switch (gapless!)
+                    mpg123_close(mh);
+                    mpg123_delete(mh);
+
+                    mh = mh_next;
+                    mh_next = nullptr;
+
+                    playerCommitNextTrack(nextIndex);
+
+                    long rate;
+                    int ch, enc;
+
+                    if (mpg123_getformat(mh, &rate, &ch, &enc) == MPG123_OK)
+                    {
+                        g_state.sampleRate = rate;
+                        g_state.channels   = ch;
+                    }
+
+                    samplesPlayed = 0;
+                    g_state.elapsedSeconds = 0;
+
+                    off_t len = mpg123_length(mh);
+                    g_state.durationSeconds =
+                        (len > 0) ? (int)(len / g_state.sampleRate) : 0;
+
+                    continue; // keep decoding WITHOUT GAP
+                }
+                if (mh_next)
+                {
+                    mpg123_close(mh_next);
+                    mpg123_delete(mh_next);
+                    mh_next = nullptr;
+                }
             }
 
             /* ---- trigger crossfade ---- */
-            int samplesRemaining =
-                (g_state.durationSeconds * g_state.sampleRate) - samplesPlayed;
+            // int samplesRemaining =
+            //     (g_state.durationSeconds * g_state.sampleRate) - samplesPlayed;
 
             int crossfadeSamples =
                 (int)(g_settings.crossfadeSeconds * g_state.sampleRate);
