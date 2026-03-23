@@ -60,23 +60,23 @@ void mp3SetLoadedFolder(const char* path)
     g_loadedFolder[sizeof(g_loadedFolder) - 1] = '\0';
 }
 
-static void parseReplayGain(const char* text, Mp3MetadataEntry& entry)
+static void parseReplayGain(const char* key, const char* value, Mp3MetadataEntry& entry)
 {
-    if (!text) return;
+    if (!key || !value) return;
 
-    if (strstr(text, "REPLAYGAIN_TRACK_GAIN"))
+    if (strcasecmp(key, "REPLAYGAIN_TRACK_GAIN") == 0)
     {
         float db = 0.0f;
-        if (sscanf(text, "REPLAYGAIN_TRACK_GAIN=%f", &db) == 1)
+        if (sscanf(value, "%f", &db) == 1)
         {
             entry.replayGainDb = db;
             entry.hasReplayGain = true;
         }
     }
-    else if (strstr(text, "REPLAYGAIN_TRACK_PEAK"))
+    else if (strcasecmp(key, "REPLAYGAIN_TRACK_PEAK") == 0)
     {
         float peak = 1.0f;
-        if (sscanf(text, "REPLAYGAIN_TRACK_PEAK=%f", &peak) == 1)
+        if (sscanf(value, "%f", &peak) == 1)
         {
             entry.replayGainPeak = peak;
         }
@@ -504,7 +504,12 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
                 char buffer[256] = {0};
                 readTextFrame(f, frameSize, buffer, sizeof(buffer));
 
-                parseReplayGain(buffer, entry);
+                char* sep = strchr(buffer, '=');
+                if (sep)
+                {
+                    *sep = 0;
+                    parseReplayGain(buffer, sep + 1, entry);
+                }
             }
             else
             {
@@ -539,8 +544,32 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
                 readTextFrame(f, frameSize, entry.artist, sizeof(entry.artist));
             else if (strcmp(frameId,"TPE2")==0 && entry.artist[0]==0)
                 readTextFrame(f, frameSize, entry.artist, sizeof(entry.artist));
+            else if (strcmp(frameId, "TXXX") == 0)
+            {
+                char buffer[256] = {0};
+                readTextFrame(f, frameSize, buffer, sizeof(buffer));
+
+                // Format: "KEY\0VALUE" OR "KEY=VALUE"
+                char* value = strchr(buffer, '\0');
+
+                if (value && *(value + 1))
+                {
+                    parseReplayGain(buffer, value + 1, entry);
+                }
+                else
+                {
+                    char* sep = strchr(buffer, '=');
+                    if (sep)
+                    {
+                        *sep = 0;
+                        parseReplayGain(buffer, sep + 1, entry);
+                    }
+                }
+            }
             else
+            {
                 fseek(f, frameSize, SEEK_CUR);
+            }
         }
     }
 
