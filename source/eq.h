@@ -9,6 +9,8 @@ class Equalizer
 public:
     void setPreamp(float db);
     float getPreamp() const;
+    void setReplayGainPreamp(float db);
+    float getReplayGainPreamp() const;    
     void setBand(int index, float value);
     float getBand(int index) const;
     void setReplayGain(float db, float peak);

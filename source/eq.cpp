@@ -1,6 +1,8 @@
 #include <switch.h>
 #include "eq.h"
 #include "ui.h"
+#include "settings.h"
+#include "settings_state.h"
 #include <algorithm>
 #include <cmath>
 
@@ -18,6 +20,8 @@ static float g_replayGainLinear = 1.0f;
 extern float bandValues[SPECTRUM_BARS];
 static float limiterThreshold = 0.90f;  // start limiting near full scale
 static float limiterSoftness  = 4.0f;   // higher = softer curve
+static float g_replayGainPreampDb = 0.0f;
+static float g_replayGainPreampLinear = 1.0f;
 
 static const float bandFrequencies[10] =
 {
@@ -106,6 +110,13 @@ void Equalizer::updateBandFilter(int index)
     filtersR[biquadIndex].setupPeaking(sampleRate, freq, q, gain);
 }
 
+void Equalizer::setReplayGainPreamp(float db)
+{
+    g_replayGainPreampDb = std::clamp(db, -12.0f, 12.0f);
+    g_replayGainPreampLinear =
+        std::pow(10.0f, g_replayGainPreampDb / 20.0f);
+}
+
 float Equalizer::getPreampLinear() const
 {
     if (!enabled)
@@ -190,22 +201,29 @@ void updateAutoEQ()
 
 float Equalizer::processSample(float sample, int channel)
 {
+    // -------------------------
+    // ReplayGain stage (ALWAYS active if enabled)
+    // -------------------------
+    float rg = g_settings.replayGainEnabled
+        ? (g_replayGainLinear * g_replayGainPreampLinear)
+        : 1.0f;
+
+    sample *= rg;
+
+    // -------------------------
+    // If EQ disabled → skip filters but KEEP ReplayGain
+    // -------------------------
     if (!enabled)
         return sample;
 
-    autoEQBuffer[autoEQIndex++] = sample;
+    // -------------------------
+    // EQ preamp (separate from ReplayGain)
+    // -------------------------
+    sample *= (preampLinear * 0.85f); // keep your headroom
 
-    if (autoEQIndex >= 1024)
-        autoEQIndex = 0;
-
-    // Apply preamp
-    // ReplayGain FIRST
-    //updateReplayGain(sample);
-    //sample *= replayGain;
-    // True Replaygain Handled via g_replayGainLinear
-    // Then EQ preamp (with headroom to avoid clipping)
-    sample *= (preampLinear * g_replayGainLinear * 0.85f);
-
+    // -------------------------
+    // Filters
+    // -------------------------
     for (int i = 0; i < 10; ++i)
     {
         if (bands[i + 1] == 0.0f)
@@ -216,8 +234,11 @@ float Equalizer::processSample(float sample, int channel)
         else
             sample = filtersR[i].process(sample);
     }
+
+    // -------------------------
+    // Soft clip + limiter
+    // -------------------------
     sample = std::tanh(sample);
-    // Apply soft limiter LAST (after EQ + gain)
     sample = softLimiter(sample);
 
     return sample;
@@ -242,6 +263,10 @@ float Equalizer::getPreamp() const
     return preampDb;
 }
 
+float Equalizer::getReplayGainPreamp() const
+{
+    return g_replayGainPreampDb;
+}
 void Equalizer::setEnabled(bool state)
 {
     enabled = state;

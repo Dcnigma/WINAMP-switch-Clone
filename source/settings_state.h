@@ -4,9 +4,10 @@ enum
 {
     SETTING_CROSSFADE,
     SETTING_CROSSFADE_TIME,
-    SETTING_AUTO_EQ,
+    SETTING_REPLAYGAIN,
+    SETTING_REPLAYGAIN_PREAMP,
+    SETTING_AUTOEQ,
     SETTING_BACK,
-
     SETTINGS_COUNT
 };
 
@@ -14,6 +15,7 @@ struct PlayerSettings
 {
     bool crossfadeEnabled;
     float crossfadeSeconds;
+    bool replayGainEnabled;
 };
 
 
