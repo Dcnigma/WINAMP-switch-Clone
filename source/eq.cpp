@@ -16,6 +16,8 @@ static const float TARGET_LOUDNESS = 0.15f; // tweak later
 static float g_replayGainLinear = 1.0f;
 #define SPECTRUM_BARS 20
 extern float bandValues[SPECTRUM_BARS];
+static float limiterThreshold = 0.90f;  // start limiting near full scale
+static float limiterSoftness  = 4.0f;   // higher = softer curve
 
 static const float bandFrequencies[10] =
 {
@@ -51,6 +53,25 @@ void updateReplayGain(float sample)
         replayGainDb = 20.0f * log10f(replayGain);
     }
 }
+
+static inline float softLimiter(float x)
+{
+    float absx = fabsf(x);
+
+    if (absx <= limiterThreshold)
+        return x;
+
+    // soft knee compression
+    float excess = absx - limiterThreshold;
+
+    float compressed =
+        limiterThreshold +
+        (1.0f - limiterThreshold) *
+        (1.0f - expf(-excess * limiterSoftness));
+
+    return (x > 0.0f) ? compressed : -compressed;
+}
+
 void Equalizer::setSampleRate(float sr)
 {
     sampleRate = sr;
@@ -179,11 +200,11 @@ float Equalizer::processSample(float sample, int channel)
 
     // Apply preamp
     // ReplayGain FIRST
-    updateReplayGain(sample);
-    sample *= replayGain;
-
-    // Then EQ preamp
-    sample *= (preampLinear * g_replayGainLinear);
+    //updateReplayGain(sample);
+    //sample *= replayGain;
+    // True Replaygain Handled via g_replayGainLinear
+    // Then EQ preamp (with headroom to avoid clipping)
+    sample *= (preampLinear * g_replayGainLinear * 0.85f);
 
     for (int i = 0; i < 10; ++i)
     {
@@ -196,6 +217,9 @@ float Equalizer::processSample(float sample, int channel)
             sample = filtersR[i].process(sample);
     }
     sample = std::tanh(sample);
+    // Apply soft limiter LAST (after EQ + gain)
+    sample = softLimiter(sample);
+
     return sample;
 }
 
