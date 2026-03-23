@@ -31,6 +31,9 @@ struct Mp3MetadataEntry
     int bitrateKbps;
     int sampleRateKHz;
     int id3TagBytes;
+    float replayGainDb = 0.0f;
+    float replayGainPeak = 1.0f;
+    bool  hasReplayGain = false;    
 };
 
 struct RuntimeMetadata

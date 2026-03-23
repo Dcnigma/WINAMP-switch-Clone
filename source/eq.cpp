@@ -8,10 +8,12 @@ Equalizer g_equalizer;
 
 static float autoEQBuffer[1024];
 static int autoEQIndex = 0;
-//bool autoEQEnabled = false;
-//extern float bandValues[20];
-//extern const int SPECTRUM_BARS;
+static float replayGain = 1.0f;
+static float replayGainDb = 0.0f;
 
+static float loudnessAvg = 0.0f;
+static const float TARGET_LOUDNESS = 0.15f; // tweak later
+static float g_replayGainLinear = 1.0f;
 #define SPECTRUM_BARS 20
 extern float bandValues[SPECTRUM_BARS];
 
@@ -29,24 +31,26 @@ static const float bandFrequencies[10] =
     16000.0f
 };
 
-// static void simpleFFT(const float* inReal, float* outMag, int N)
-// {
-//     for (int k = 0; k < N / 2; k++)
-//     {
-//         float real = 0.0f;
-//         float imag = 0.0f;
-//
-//         for (int n = 0; n < N; n++)
-//         {
-//             float phase = 2.0f * M_PI * k * n / N;
-//             real += inReal[n] * cosf(phase);
-//             imag -= inReal[n] * sinf(phase);
-//         }
-//
-//         outMag[k] = sqrtf(real * real + imag * imag);
-//     }
-// }
+void updateReplayGain(float sample)
+{
+    float absSample = std::fabs(sample);
 
+    // smooth RMS-ish estimate
+    loudnessAvg = loudnessAvg * 0.999f + absSample * 0.001f;
+
+    if (loudnessAvg > 0.0001f)
+    {
+        float desiredGain = TARGET_LOUDNESS / loudnessAvg;
+
+        // smooth gain changes (important!)
+        replayGain = replayGain * 0.995f + desiredGain * 0.005f;
+
+        // clamp (avoid insane boosts)
+        replayGain = std::clamp(replayGain, 0.2f, 3.0f);
+
+        replayGainDb = 20.0f * log10f(replayGain);
+    }
+}
 void Equalizer::setSampleRate(float sr)
 {
     sampleRate = sr;
@@ -98,6 +102,21 @@ void Equalizer::setBand(int index, float value)
     bands[index] = std::clamp(value, -12.0f, 12.0f);
 
     updateBandFilter(index);
+}
+
+void Equalizer::setReplayGain(float db, float peak)
+{
+    float linear = std::pow(10.0f, db / 20.0f);
+
+    // Prevent clipping using peak
+    if (peak > 0.0f)
+    {
+        float safe = 1.0f / peak;
+        if (linear > safe)
+            linear = safe;
+    }
+
+    g_replayGainLinear = linear;
 }
 
 void updateAutoEQ()
@@ -159,7 +178,12 @@ float Equalizer::processSample(float sample, int channel)
         autoEQIndex = 0;
 
     // Apply preamp
-    sample *= preampLinear;
+    // ReplayGain FIRST
+    updateReplayGain(sample);
+    sample *= replayGain;
+
+    // Then EQ preamp
+    sample *= (preampLinear * g_replayGainLinear);
 
     for (int i = 0; i < 10; ++i)
     {
@@ -171,7 +195,7 @@ float Equalizer::processSample(float sample, int channel)
         else
             sample = filtersR[i].process(sample);
     }
-
+    sample = std::tanh(sample);
     return sample;
 }
 

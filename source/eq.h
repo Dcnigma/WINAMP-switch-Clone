@@ -11,7 +11,7 @@ public:
     float getPreamp() const;
     void setBand(int index, float value);
     float getBand(int index) const;
-
+    void setReplayGain(float db, float peak);
     void setEnabled(bool enabled);
     bool isEnabled() const;
     void toggle();

@@ -2,6 +2,7 @@
 #include "player_state.h"
 #include "playlist.h"
 #include "mp3.h"
+#include "eq.h"
 #include "audio_engine.h"
 #include "ui.h"
 #include <SDL.h>
@@ -346,6 +347,15 @@ void playerPlay(int index)
     g_state.playing    = true;
     g_state.paused     = false;
     playlistSetCurrentIndex(index);
+    const Mp3MetadataEntry* meta = mp3GetTrackMetadata(index);
+      if (meta && meta->hasReplayGain)
+      {
+          g_equalizer.setReplayGain(meta->replayGainDb, meta->replayGainPeak);
+      }
+      else
+      {
+          g_equalizer.setReplayGain(0.0f, 1.0f);
+      }
     off_t len = mpg123_length(mh);
     g_state.durationSeconds =
         (len > 0) ? (int)(len / g_state.sampleRate) : 0;
@@ -353,6 +363,7 @@ void playerPlay(int index)
     samplesPlayed = 0;
     g_state.elapsedSeconds = 0;
     g_playbackState = STATE_PLAYING;
+    printf("ReplayGain applied: %.2f dB\n", meta->replayGainDb);    
 }
 
 void playerPrev()

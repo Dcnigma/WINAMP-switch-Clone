@@ -60,6 +60,29 @@ void mp3SetLoadedFolder(const char* path)
     g_loadedFolder[sizeof(g_loadedFolder) - 1] = '\0';
 }
 
+static void parseReplayGain(const char* text, Mp3MetadataEntry& entry)
+{
+    if (!text) return;
+
+    if (strstr(text, "REPLAYGAIN_TRACK_GAIN"))
+    {
+        float db = 0.0f;
+        if (sscanf(text, "REPLAYGAIN_TRACK_GAIN=%f", &db) == 1)
+        {
+            entry.replayGainDb = db;
+            entry.hasReplayGain = true;
+        }
+    }
+    else if (strstr(text, "REPLAYGAIN_TRACK_PEAK"))
+    {
+        float peak = 1.0f;
+        if (sscanf(text, "REPLAYGAIN_TRACK_PEAK=%f", &peak) == 1)
+        {
+            entry.replayGainPeak = peak;
+        }
+    }
+}
+
 enum ScanPhase {
     SCAN_FAST,
     SCAN_ACCURATE
@@ -476,8 +499,17 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
                 readTextFrame(f, frameSize, entry.artist, sizeof(entry.artist));
             else if (strcmp(frameId,"TP2")==0 && entry.artist[0]==0) // Album artist fallback
                 readTextFrame(f, frameSize, entry.artist, sizeof(entry.artist));
+            else if (strcmp(frameId, "TXXX") == 0)
+            {
+                char buffer[256] = {0};
+                readTextFrame(f, frameSize, buffer, sizeof(buffer));
+
+                parseReplayGain(buffer, entry);
+            }
             else
+            {
                 fseek(f, frameSize, SEEK_CUR);
+            }
         }
         else
         {
