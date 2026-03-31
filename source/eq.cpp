@@ -8,21 +8,28 @@
 
 Equalizer g_equalizer;
 
-static float autoEQBuffer[1024];
-static int autoEQIndex = 0;
-static float replayGain = 1.0f;
+//static float autoEQBuffer[1024];
+//static int autoEQIndex = 0;
+//static float replayGain = 1.0f;
 static float replayGainDb = 0.0f;
 
+static float g_replayGainTrackLinear = 1.0f;
+static float g_replayGainAlbumLinear = 1.0f;
+//static float replayGain = 1.0f;
 static float loudnessAvg = 0.0f;
 static const float TARGET_LOUDNESS = 0.15f; // tweak later
-static float g_replayGainLinear = 1.0f;
+//static float g_replayGainLinear = 1.0f;
+static float autoGainLinear = 1.0f;   // NEW
+static float replayGainLinear = 1.0f;
 #define SPECTRUM_BARS 20
 extern float bandValues[SPECTRUM_BARS];
 static float limiterThreshold = 0.90f;  // start limiting near full scale
 static float limiterSoftness  = 4.0f;   // higher = softer curve
 static float g_replayGainPreampDb = 0.0f;
 static float g_replayGainPreampLinear = 1.0f;
-
+//static float autoGainLinear = 1.0f;
+//static float autoGainDb     = 0.0f;
+//static float loudnessAvg    = 0.0f;
 static const float bandFrequencies[10] =
 {
     60.0f,
@@ -37,24 +44,24 @@ static const float bandFrequencies[10] =
     16000.0f
 };
 
-void updateReplayGain(float sample)
+void updateAutoGain(float sample)
 {
     float absSample = std::fabs(sample);
 
-    // smooth RMS-ish estimate
+    // Smooth loudness estimate
     loudnessAvg = loudnessAvg * 0.999f + absSample * 0.001f;
 
     if (loudnessAvg > 0.0001f)
     {
         float desiredGain = TARGET_LOUDNESS / loudnessAvg;
 
-        // smooth gain changes (important!)
-        replayGain = replayGain * 0.995f + desiredGain * 0.005f;
+        // Smooth gain changes
+        autoGainLinear = autoGainLinear * 0.995f + desiredGain * 0.005f;
 
-        // clamp (avoid insane boosts)
-        replayGain = std::clamp(replayGain, 0.2f, 3.0f);
+        // Clamp (avoid extreme boosts)
+        autoGainLinear = std::clamp(autoGainLinear, 0.2f, 3.0f);
 
-        replayGainDb = 20.0f * log10f(replayGain);
+      //  autoGainDb = 20.0f * log10f(autoGainLinear);
     }
 }
 
@@ -74,6 +81,15 @@ static inline float softLimiter(float x)
         (1.0f - expf(-excess * limiterSoftness));
 
     return (x > 0.0f) ? compressed : -compressed;
+}
+
+void Equalizer::setReplayGainDb(float db)
+{
+    float preamp = getReplayGainPreamp(); // already exists
+
+    float totalDb = db + preamp;
+
+    replayGainLinear = powf(10.0f, totalDb / 20.0f);
 }
 
 void Equalizer::setSampleRate(float sr)
@@ -136,11 +152,10 @@ void Equalizer::setBand(int index, float value)
     updateBandFilter(index);
 }
 
-void Equalizer::setReplayGain(float db, float peak)
+void Equalizer::setReplayGain(float db, float peak, bool isAlbum)
 {
     float linear = std::pow(10.0f, db / 20.0f);
 
-    // Prevent clipping using peak
     if (peak > 0.0f)
     {
         float safe = 1.0f / peak;
@@ -148,7 +163,10 @@ void Equalizer::setReplayGain(float db, float peak)
             linear = safe;
     }
 
-    g_replayGainLinear = linear;
+    if (isAlbum)
+        g_replayGainAlbumLinear = linear;
+    else
+        g_replayGainTrackLinear = linear;
 }
 
 void updateAutoEQ()
@@ -204,12 +222,40 @@ float Equalizer::processSample(float sample, int channel)
     // -------------------------
     // ReplayGain stage (ALWAYS active if enabled)
     // -------------------------
-    float rg = g_settings.replayGainEnabled
-        ? (g_replayGainLinear * g_replayGainPreampLinear)
-        : 1.0f;
+    // -------------------------
+    // ReplayGain (metadata-based)
+    // -------------------------
+    float gainLinear = 1.0f;
 
-    sample *= rg;
+    switch (g_settings.replayGainMode)
+    {
+        case REPLAYGAIN_OFF:
+            gainLinear = 1.0f;
+            break;
 
+        case REPLAYGAIN_TRACK:
+            gainLinear = g_replayGainTrackLinear;
+            break;
+
+        case REPLAYGAIN_ALBUM:
+            gainLinear = g_replayGainAlbumLinear;
+            break;
+    }
+
+    // Apply ReplayGain preamp (if you keep it)
+    gainLinear *= g_replayGainPreampLinear;
+
+    // Apply ReplayGain
+    // Apply ReplayGain (static)
+    sample *= replayGainLinear;
+
+    // Apply AutoGain (dynamic)
+    if (g_settings.autoGainEnabled)
+    {
+        updateAutoGain(sample);
+        sample *= autoGainLinear;
+    }
+    sample = std::clamp(sample, -1.0f, 1.0f);
     // -------------------------
     // If EQ disabled → skip filters but KEEP ReplayGain
     // -------------------------

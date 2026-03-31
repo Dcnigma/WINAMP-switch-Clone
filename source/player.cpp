@@ -277,7 +277,30 @@ void playerInit()
     g_state.shuffle = false;
     g_state.paused  = false;
 }
+void applyReplayGainFromMetadata(const Mp3MetadataEntry& meta)
+{
+    float db = 0.0f;
 
+    switch (g_settings.replayGainMode)
+    {
+        case REPLAYGAIN_TRACK:
+            if (meta.hasTrackReplayGain)
+                db = meta.replayGainDb;
+            break;
+
+        case REPLAYGAIN_ALBUM:
+            if (meta.hasAlbumReplayGain)
+                db = meta.replayGainAlbumDb;
+            break;
+
+        case REPLAYGAIN_OFF:
+        default:
+            db = 0.0f;
+            break;
+    }
+
+    g_equalizer.setReplayGainDb(db);
+}
 void playerShutdown()
 {
     playerStop();
@@ -288,83 +311,96 @@ void playerShutdown()
 /* ---------------------------------------------------- */
 void playerPlay(int index)
 {
-
-    if (index < 0 || index >= playlistGetCount())
-        return;
+    stopPlaybackInternal();
 
     const char* path = playlistGetTrack(index);
     if (!path)
+    {
+        printf("Error: invalid track path\n");
         return;
-
-    stopPlaybackInternal();
-    g_playbackState = STATE_STOPPED;
-    g_crossfadeTargetIndex = -1;
-    g_metadataSwitched = false;
+    }
 
     mh = mpg123_new(nullptr, nullptr);
     if (!mh)
+    {
+        printf("Error: mpg123_new failed\n");
         return;
-
-    auto cleanup = [&]() {
-        if (mh) {
-            mpg123_close(mh);
-            mpg123_delete(mh);
-            mh = nullptr;
-        }
-        audio.shutdown();
-    };
+    }
 
     mpg123_param(mh, MPG123_GAPLESS, 1, 0);
     mpg123_param(mh, MPG123_ADD_FLAGS, MPG123_SKIP_ID3V2, 0);
     mpg123_param(mh, MPG123_FORCE_STEREO, 1, 0);
 
-    if (mpg123_open(mh, path) != MPG123_OK) {
-        cleanup();
+    if (mpg123_open(mh, path) != MPG123_OK)
+    {
+        printf("Error: failed to open %s\n", path);
         return;
     }
 
-    long rate = 0;
-    int ch = 0, enc = 0;
-    if (mpg123_getformat(mh, &rate, &ch, &enc) != MPG123_OK) {
-        cleanup();
+    long rate;
+    int ch, enc;
+
+    if (mpg123_getformat(mh, &rate, &ch, &enc) != MPG123_OK)
+    {
+        printf("Error: failed to get format\n");
         return;
     }
 
     mpg123_format_none(mh);
     mpg123_format(mh, rate, ch, MPG123_ENC_SIGNED_16);
 
-    if (!audio.init(rate, 2)) {
-        cleanup();
-        return;
-    }
-
-    audio.setPaused(false);
-    audio.start();
-
-    g_state.trackIndex = index;
     g_state.sampleRate = rate;
     g_state.channels   = ch;
-    g_state.playing    = true;
-    g_state.paused     = false;
-    playlistSetCurrentIndex(index);
-    const Mp3MetadataEntry* meta = mp3GetTrackMetadata(index);
-      if (meta && meta->hasReplayGain)
-      {
-          g_equalizer.setReplayGain(meta->replayGainDb, meta->replayGainPeak);
-      }
-      else
-      {
-          g_equalizer.setReplayGain(0.0f, 1.0f);
-      }
+    audio.init(rate, ch);        // or audio.initialize(...)
+    audio.start();
+    audio.setPaused(false);
     off_t len = mpg123_length(mh);
     g_state.durationSeconds =
-        (len > 0) ? (int)(len / g_state.sampleRate) : 0;
+        (len > 0) ? (int)(len / rate) : 0;
 
     samplesPlayed = 0;
     g_state.elapsedSeconds = 0;
+    const Mp3MetadataEntry* meta = mp3GetTrackMetadata(index);
+    if (meta)
+    {
+        applyReplayGainFromMetadata(*meta);
+    }
+    // ✅ ReplayGain (ONLY feed data to EQ)
+    // const Mp3MetadataEntry* meta = mp3GetTrackMetadata(index);
+    //
+    // if (meta)
+    // {
+    //     if (meta->hasTrackReplayGain)
+    //     {
+    //         g_equalizer.setReplayGain(
+    //             meta->replayGainDb,
+    //             meta->replayGainPeak,
+    //             false
+    //         );
+    //     }
+    //
+    //     if (meta->hasAlbumReplayGain)
+    //     {
+    //         g_equalizer.setReplayGain(
+    //             meta->replayGainAlbumDb,
+    //             meta->replayGainAlbumPeak,
+    //             true
+    //         );
+    //     }
+    // }
+
+    g_state.trackIndex = index;
+    g_state.playing = true;
+    g_state.paused  = false;
+
+    playlistSetCurrentIndex(index);
+
     g_playbackState = STATE_PLAYING;
-    printf("ReplayGain applied: %.2f dB\n", meta->replayGainDb);    
+
+    printf("Playing: %s\n", path);
 }
+
+
 
 void playerPrev()
 {
@@ -640,7 +676,7 @@ void playerUpdate()
                 samplesPlayed += frames;
                 g_state.elapsedSeconds =
                     (int)(samplesPlayed / g_state.sampleRate);
-
+                    //printf("PCM push: %zu samples\n", frames * 2);
                 static float floatPCM[4096 * 2];
                 processSamplesToFloat(
                     (int16_t*)buffer,
@@ -835,6 +871,7 @@ void playerUpdate()
             break;
         }
     }
+
     /* ===================================================== */
     /* DRAIN COMPLETE → NEXT TRACK                           */
     /* ===================================================== */

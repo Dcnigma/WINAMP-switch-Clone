@@ -14,7 +14,7 @@ void playerStartCrossfade();
 void playerPrev();
 bool playerIsPlaying();
 void playerUpdate();
-
+void applyReplayGainFromMetadata();
 //bool playerIsPlaying();
 bool playerIsPaused();
 

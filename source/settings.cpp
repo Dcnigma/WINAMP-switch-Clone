@@ -8,9 +8,10 @@ static int  g_selectedItem = 0;
 
 PlayerSettings g_settings =
 {
-    false,   // crossfadeEnabled
-    3.0f,    // crossfadeSeconds
-    true     // replayGainEnabled default ON (recommended)
+    false,                 // crossfadeEnabled
+    3.0f,                  // crossfadeSeconds
+    false,                 // autoGainEnabled 
+    REPLAYGAIN_TRACK       // replayGainMode
 };
 
 void settingsOpen()
@@ -66,8 +67,12 @@ void settingsHandleInput(PadState* pad)
                 g_settings.crossfadeSeconds = 3.0f;
                 break;
             case SETTING_REPLAYGAIN:
-                g_settings.replayGainEnabled =
-                    !g_settings.replayGainEnabled;
+                // cycle OFF → TRACK → ALBUM
+                g_settings.replayGainMode =
+                    (ReplayGainMode)((g_settings.replayGainMode + 1) % 3);
+                break;
+            case SETTING_AUTOGAIN:
+                g_settings.autoGainEnabled = !g_settings.autoGainEnabled;
                 break;
             case SETTING_REPLAYGAIN_PREAMP:
                 // handled with left/right
@@ -134,6 +139,7 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
         "Crossfade Time",
         "ReplayGain",
         "ReplayGain Preamp",
+        "Auto Gain",
         "Auto EQ",
         "Back"
     };
@@ -198,6 +204,7 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
             SDL_Rect fill = { barX, barY, (int)(barW * t), barH };
             SDL_RenderFillRect(renderer, &fill);
         }
+
         SDL_RenderCopy(renderer, tex, NULL, &dst);
 
         SDL_FreeSurface(surf);
@@ -214,8 +221,14 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
         }
         else if (i == SETTING_REPLAYGAIN)
         {
-            sprintf(valueText, "%s",
-                g_settings.replayGainEnabled ? "ON" : "OFF");
+            const char* modeStr = "OFF";
+
+            if (g_settings.replayGainMode == REPLAYGAIN_TRACK)
+                modeStr = "TRACK";
+            else if (g_settings.replayGainMode == REPLAYGAIN_ALBUM)
+                modeStr = "ALBUM";
+
+            sprintf(valueText, "%s", modeStr);
         }
         else if (i == SETTING_REPLAYGAIN_PREAMP)
           {
@@ -227,7 +240,11 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
             sprintf(valueText, "%.1fs",
                 g_settings.crossfadeSeconds);
         }
-
+        else if (i == SETTING_AUTOGAIN)
+        {
+            sprintf(valueText, "%s",
+                g_settings.autoGainEnabled ? "ON" : "OFF");
+        }
         if (valueText[0])
         {
             SDL_Surface* vs =

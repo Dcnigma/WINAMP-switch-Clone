@@ -10,10 +10,12 @@ public:
     void setPreamp(float db);
     float getPreamp() const;
     void setReplayGainPreamp(float db);
-    float getReplayGainPreamp() const;    
+    void setReplayGain(float db, float peak, bool isAlbum);
+//    void setReplayGain(float db, float peak);
+    void setReplayGainDb(float db);
+    float getReplayGainPreamp() const;
     void setBand(int index, float value);
     float getBand(int index) const;
-    void setReplayGain(float db, float peak);
     void setEnabled(bool enabled);
     bool isEnabled() const;
     void toggle();

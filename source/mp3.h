@@ -33,7 +33,16 @@ struct Mp3MetadataEntry
     int id3TagBytes;
     float replayGainDb = 0.0f;
     float replayGainPeak = 1.0f;
-    bool  hasReplayGain = false;    
+    //bool  hasReplayGain = false;
+    //bool hasReplayGain;
+//    bool hasReplayGainTrack = false;
+//    bool hasReplayGainAlbum = false;
+
+    bool hasTrackReplayGain = false;
+    bool hasAlbumReplayGain = false;
+
+    float replayGainAlbumDb = 0.0f;
+    float replayGainAlbumPeak = 1.0f;
 };
 
 struct RuntimeMetadata

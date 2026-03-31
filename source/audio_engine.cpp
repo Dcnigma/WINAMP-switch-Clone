@@ -3,7 +3,8 @@
 
 bool AudioEngine::init(int sampleRate, int ch) {
     channels = ch;
-
+    readPos.store(0);
+    writePos.store(0);
     SDL_AudioSpec want{};
     want.freq = sampleRate;
     want.format = AUDIO_F32SYS;
@@ -15,7 +16,7 @@ bool AudioEngine::init(int sampleRate, int ch) {
     SDL_AudioSpec have{};
     device = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
     if (!device) return false;
-
+    SDL_PauseAudioDevice(device, 0);
     g_equalizer.setSampleRate(static_cast<float>(have.freq));
 
     return true;
@@ -27,7 +28,7 @@ void AudioEngine::start() {
 
 void AudioEngine::stop() {
     if (device) SDL_PauseAudioDevice(device, 1);
-    
+
 }
 
 void AudioEngine::shutdown() {

@@ -1,21 +1,30 @@
 #pragma once
 
-enum
+enum SettingsItems
 {
     SETTING_CROSSFADE,
     SETTING_CROSSFADE_TIME,
     SETTING_REPLAYGAIN,
     SETTING_REPLAYGAIN_PREAMP,
-    SETTING_AUTOEQ,
+    SETTING_AUTOGAIN,   
+    SETTING_AUTO_EQ,
     SETTING_BACK,
     SETTINGS_COUNT
+};
+
+enum ReplayGainMode
+{
+    REPLAYGAIN_OFF = 0,
+    REPLAYGAIN_TRACK,
+    REPLAYGAIN_ALBUM
 };
 
 struct PlayerSettings
 {
     bool crossfadeEnabled;
     float crossfadeSeconds;
-    bool replayGainEnabled;
+    bool autoGainEnabled;
+    ReplayGainMode replayGainMode;
 };
 
 

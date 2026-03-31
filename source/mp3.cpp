@@ -63,23 +63,25 @@ void mp3SetLoadedFolder(const char* path)
 static void parseReplayGain(const char* key, const char* value, Mp3MetadataEntry& entry)
 {
     if (!key || !value) return;
-
+        printf("[RG] %s = %s\n", key, value);
     if (strcasecmp(key, "REPLAYGAIN_TRACK_GAIN") == 0)
     {
         float db = 0.0f;
         if (sscanf(value, "%f", &db) == 1)
         {
             entry.replayGainDb = db;
-            entry.hasReplayGain = true;
+            entry.hasTrackReplayGain = true;
         }
     }
-    else if (strcasecmp(key, "REPLAYGAIN_TRACK_PEAK") == 0)
+    else if (strcasecmp(key, "REPLAYGAIN_ALBUM_GAIN") == 0)
     {
-        float peak = 1.0f;
-        if (sscanf(value, "%f", &peak) == 1)
+        float db = 0.0f;
+        if (sscanf(value, "%f", &db) == 1)
         {
-            entry.replayGainPeak = peak;
+            entry.replayGainAlbumDb = db;
+            entry.hasAlbumReplayGain = true;
         }
+
     }
 }
 
@@ -453,6 +455,8 @@ static void readID3v1Fallback(const char* path, Mp3MetadataEntry& entry)
 static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
 {
     memset(&entry, 0, sizeof(entry));
+    entry.replayGainPeak = 1.0f;
+    entry.replayGainAlbumPeak = 1.0f;
     entry.id3TagBytes = 0;
 
     FILE* f = fopen(path, "rb");
@@ -550,12 +554,15 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
                 readTextFrame(f, frameSize, buffer, sizeof(buffer));
 
                 // Format: "KEY\0VALUE" OR "KEY=VALUE"
-                char* value = strchr(buffer, '\0');
+                // TXXX = "key\0value"
+                char* key = buffer;
+                char* value = buffer + strlen(buffer) + 1;
 
-                if (value && *(value + 1))
+                if (value < buffer + frameSize)
                 {
-                    parseReplayGain(buffer, value + 1, entry);
+                    parseReplayGain(key, value, entry);
                 }
+
                 else
                 {
                     char* sep = strchr(buffer, '=');
@@ -570,6 +577,7 @@ static void readMp3Metadata(const char* path, Mp3MetadataEntry& entry)
             {
                 fseek(f, frameSize, SEEK_CUR);
             }
+
         }
     }
 
