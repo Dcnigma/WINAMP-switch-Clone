@@ -19,18 +19,30 @@
 /* ---------------------------------------------------- */
 /* CONFIG                                               */
 /* ---------------------------------------------------- */
-#define FFT_SIZE 1024
-#define DECODE_BUFFER 8192   // bytes (mpg123 output)
+#define FFT_SIZE       1024
+#define DECODE_BUFFER  8192   // bytes (mpg123 output)
 #define SHUFFLE_MEMORY 5
+#define FLOAT_BUF_FRAMES 4096 // frames per decode chunk
 /* ---------------------------------------------------- */
 /* GLOBALS                                              */
 /* ---------------------------------------------------- */
 static AudioEngine audio;
-static mpg123_handle* mh = nullptr;
+static mpg123_handle* mh      = nullptr;
+static mpg123_handle* mh_next = nullptr;
+
 static std::vector<int> g_playQueue;
-static bool g_metadataSwitched = false;
-static int g_crossfadeTargetIndex = -1;
-static uint64_t samplesPlayedNext = 0;
+
+/* Crossfade */
+static int   g_crossfadeTargetIndex = -1;
+static float g_crossfadeProgress    = 0.0f;
+static bool  g_metadataSwitched     = false;
+
+/* Time tracking — both in decoded sample frames */
+static uint64_t samplesPlayed     = 0; // frames decoded from current track
+static uint64_t samplesPlayedNext = 0; // frames decoded from incoming track during xfade
+
+/* Gapless preload guard */
+static bool g_preloadAttempted = false;
 
 enum PlaybackState
 {
@@ -40,54 +52,60 @@ enum PlaybackState
     STATE_DRAINING
 };
 static PlaybackState g_playbackState = STATE_STOPPED;
-/* Shuffel */
+
+/* Shuffle */
 static void stopPlaybackInternal();
 static void rebuildShufflePool();
 static std::vector<int> g_shufflePool;
 static std::vector<int> g_shuffleHistory;
+
 /* FFT */
 float g_fftInput[FFT_SIZE] = {0};
 static int fftWritePos = 0;
-/* AUDIO TIME TRACKING */
-static uint64_t samplesPlayed = 0;
-/* MIXING */
+
+/* Mixing */
 static float g_volume   = 1.0f;
 static float g_pan      = 0.0f;
 static float g_leftMix  = 1.0f;
 static float g_rightMix = 1.0f;
-/* Crossfader*/
-static mpg123_handle* mh_next = nullptr;
-static float g_crossfadeProgress = 0.0f;
 
-static void playerCommitNextTrack(int nextIndex)
+/* ---------------------------------------------------- */
+/* PLAYER STATE                                         */
+/* ---------------------------------------------------- */
+PlayerState g_state = {
+    .trackIndex      = -1,
+    .elapsedSeconds  = 0,
+    .durationSeconds = 0,
+    .sampleRate      = 0,
+    .channels        = 0,
+    .playing         = false,
+    .paused          = false,
+    .shuffle         = false,
+    .repeat          = REPEAT_OFF
+};
+
+/* ---------------------------------------------------- */
+/* INTERNAL HELPERS                                     */
+/* ---------------------------------------------------- */
+
+// Safely destroy mh_next and reset it to nullptr.
+static void closeNextDecoder()
 {
-    if (nextIndex < 0)
+    if (mh_next)
     {
-        playerStop();
-        return;
+        mpg123_close(mh_next);
+        mpg123_delete(mh_next);
+        mh_next = nullptr;
     }
-    if (!g_playQueue.empty())
-    {
-        g_playQueue.erase(g_playQueue.begin());
-    }
-    else if (g_state.shuffle && !g_shufflePool.empty())
-    {
-        g_shuffleHistory.push_back(g_state.trackIndex);
-
-        if (g_shuffleHistory.size() > SHUFFLE_MEMORY)
-        {
-          g_shuffleHistory.erase(g_shuffleHistory.begin());
-        }
-
-        g_shufflePool.pop_back();
-    }
-
-    g_state.trackIndex = nextIndex;
-    playlistSetCurrentIndex(nextIndex);
 }
 
+// Open and configure the mpg123 decoder for track at `index` into mh_next.
+// BUG FIX: previous version leaked mh_next on partial failure (open OK but
+// getformat failed). Now always cleans up before returning false.
 static bool openNextDecoder(int index)
 {
+    closeNextDecoder(); // ensure no stale handle
+
     const char* path = playlistGetTrack(index);
     if (!path)
         return false;
@@ -95,37 +113,59 @@ static bool openNextDecoder(int index)
     mh_next = mpg123_new(nullptr, nullptr);
     if (!mh_next)
         return false;
-    mpg123_param(mh_next, MPG123_GAPLESS, 1, 0);
-    mpg123_param(mh_next, MPG123_ADD_FLAGS, MPG123_SKIP_ID3V2, 0);
-    mpg123_param(mh_next, MPG123_FORCE_STEREO, 1, 0);
+
+    mpg123_param(mh_next, MPG123_GAPLESS,   1,                  0);
+    mpg123_param(mh_next, MPG123_ADD_FLAGS, MPG123_SKIP_ID3V2,  0);
+    mpg123_param(mh_next, MPG123_FORCE_STEREO, 1,               0);
 
     if (mpg123_open(mh_next, path) != MPG123_OK)
+    {
+        closeNextDecoder();
         return false;
+    }
 
-    long rate;
-    int ch, enc;
-
+    long rate; int ch, enc;
     if (mpg123_getformat(mh_next, &rate, &ch, &enc) != MPG123_OK)
+    {
+        closeNextDecoder();
         return false;
+    }
 
     mpg123_format_none(mh_next);
     mpg123_format(mh_next, rate, ch, MPG123_ENC_SIGNED_16);
-
     return true;
 }
 
-void playerEnqueue(int index)
+// Commit the incoming track as the new current track.
+// Only updates bookkeeping — does NOT stop/start playback.
+// BUG FIX: removed the playerStop() call that was here when nextIndex < 0.
+// Calling playerStop() from inside the decode loop destroyed mh/mh_next while
+// we were still using them. Callers must check nextIndex before calling this.
+static void playerCommitNextTrack(int nextIndex)
 {
-    if (index < 0 || index >= playlistGetCount())
-        return;
+    // Pop from queue if this track came from it
+    if (!g_playQueue.empty() && g_playQueue.front() == nextIndex)
+    {
+        g_playQueue.erase(g_playQueue.begin());
+    }
+    else if (g_state.shuffle && !g_shufflePool.empty())
+    {
+        g_shuffleHistory.push_back(g_state.trackIndex);
+        if (g_shuffleHistory.size() > SHUFFLE_MEMORY)
+            g_shuffleHistory.erase(g_shuffleHistory.begin());
+        // Remove the chosen track from the pool
+        auto it = std::find(g_shufflePool.begin(), g_shufflePool.end(), nextIndex);
+        if (it != g_shufflePool.end())
+            g_shufflePool.erase(it);
+    }
 
-    g_playQueue.push_back(index);
+    g_state.trackIndex = nextIndex;
+    playlistSetCurrentIndex(nextIndex);
 }
 
 static void rebuildShufflePool()
 {
     g_shufflePool.clear();
-
     int count = playlistGetCount();
     for (int i = 0; i < count; ++i)
         g_shufflePool.push_back(i);
@@ -133,95 +173,63 @@ static void rebuildShufflePool()
     static std::mt19937 rng{ std::random_device{}() };
     std::shuffle(g_shufflePool.begin(), g_shufflePool.end(), rng);
 }
+
 static int playerPeekNextIndex()
 {
     int count = playlistGetCount();
     if (count == 0)
         return -1;
-    /* -------------------------------------- */
-    /* QUEUE                                  */
-    /* -------------------------------------- */
+
+    /* QUEUE */
     if (!g_playQueue.empty())
         return g_playQueue.front();
-    /* -------------------------------------- */
-    /* REPEAT ONE                             */
-    /* -------------------------------------- */
+
+    /* REPEAT ONE */
     if (g_state.repeat == REPEAT_ONE && g_state.trackIndex >= 0)
         return g_state.trackIndex;
-    /* -------------------------------------- */
-    /* SHUFFLE                                */
-    /* -------------------------------------- */
+
+    /* SHUFFLE */
     if (g_state.shuffle)
     {
-        // Rebuild if empty
         if (g_shufflePool.empty())
         {
             if (g_state.repeat == REPEAT_ALL)
             {
                 rebuildShufflePool();
-                // Avoid immediate repeat
-                auto it = std::find(
-                    g_shufflePool.begin(),
-                    g_shufflePool.end(),
-                    g_state.trackIndex
-                );
+                // Avoid immediately re-playing the same track
+                auto it = std::find(g_shufflePool.begin(), g_shufflePool.end(), g_state.trackIndex);
                 if (it != g_shufflePool.end())
                     g_shufflePool.erase(it);
             }
             else
             {
-                return -1;
+                return -1; // end of shuffle, no repeat
             }
         }
-
-        if (!g_shufflePool.empty())
-        {
-            return g_shufflePool.back();  // consistent with removal
-        }
-
-        return -1;
+        return g_shufflePool.empty() ? -1 : g_shufflePool.back();
     }
-    /* -------------------------------------- */
-    /* NORMAL PLAYBACK                        */
-    /* -------------------------------------- */
+
+    /* NORMAL */
     int next = g_state.trackIndex + 1;
     if (next >= count)
-    {
-        if (g_state.repeat == REPEAT_ALL)
-            return 0;
-        else
-            return -1;
-    }
+        return (g_state.repeat == REPEAT_ALL) ? 0 : -1;
+
     return next;
 }
-/* ---------------------------------------------------- */
-/* PLAYER STATE                                         */
-/* ---------------------------------------------------- */
-PlayerState g_state = {
-    .trackIndex = -1,
-    .elapsedSeconds = 0,
-    .durationSeconds = 0,
-    .sampleRate = 0,
-    .channels = 0,
-    .playing = false,
-    .paused  = false,
-    .shuffle = false,
-    .repeat  = REPEAT_OFF
-};
+
 /* ---------------------------------------------------- */
 /* DSP                                                  */
 /* ---------------------------------------------------- */
 static void processSamplesToFloat(
     const int16_t* in,
-    float* out,
-    int frames,
-    int channels
+    float*         out,
+    int            frames,
+    int            channels
 ) {
-    for (int i = 0; i < frames; i++) {
+    for (int i = 0; i < frames; i++)
+    {
         float left  = in[i * channels]     / 32768.0f;
-        float right = (channels > 1)
-            ? in[i * channels + 1] / 32768.0f
-            : left;
+        float right = (channels > 1) ? in[i * channels + 1] / 32768.0f : left;
         left  *= g_leftMix;
         right *= g_rightMix;
         out[i * 2]     = left;
@@ -230,22 +238,31 @@ static void processSamplesToFloat(
         fftWritePos = (fftWritePos + 1) % FFT_SIZE;
     }
 }
+
 /* ---------------------------------------------------- */
 /* VOLUME / PAN                                         */
 /* ---------------------------------------------------- */
-void playerAdjustVolume(float delta)
-{
-    playerSetVolume(g_volume + delta);
-}
 void playerApplyVolumePan()
 {
     float left  = g_volume;
     float right = g_volume;
-    if (g_pan < 0.0f) right *= (1.0f + g_pan);
-    else if (g_pan > 0.0f) left *= (1.0f - g_pan);
+    if      (g_pan < 0.0f) right *= (1.0f + g_pan);
+    else if (g_pan > 0.0f) left  *= (1.0f - g_pan);
     g_leftMix  = (left  < 0.0f) ? 0.0f : left;
     g_rightMix = (right < 0.0f) ? 0.0f : right;
 }
+
+void playerAdjustVolume(float delta) { playerSetVolume(g_volume + delta); }
+
+void playerSetVolume(float v)
+{
+    if (v < 0.0f) v = 0.0f;
+    if (v > 1.0f) v = 1.0f;
+    g_volume = v;
+    playerApplyVolumePan();
+}
+
+float playerGetVolume() { return g_volume; }
 
 void playerSetPan(float pan)
 {
@@ -257,17 +274,30 @@ void playerSetPan(float pan)
 
 float playerGetPan() { return g_pan; }
 
-void playerSetVolume(float v)
+/* ---------------------------------------------------- */
+/* REPLAY GAIN                                          */
+/* ---------------------------------------------------- */
+void applyReplayGainFromMetadata(const Mp3MetadataEntry& meta)
 {
-    if (v < 0.0f) v = 0.0f;
-    if (v > 1.0f) v = 1.0f;
-    g_volume = v;
-    playerApplyVolumePan();
+    float db = 0.0f;
+    switch (g_settings.replayGainMode)
+    {
+        case REPLAYGAIN_TRACK:
+            if (meta.hasTrackReplayGain) db = meta.replayGainDb;
+            break;
+        case REPLAYGAIN_ALBUM:
+            if (meta.hasAlbumReplayGain) db = meta.replayGainAlbumDb;
+            break;
+        case REPLAYGAIN_OFF:
+        default:
+            db = 0.0f;
+            break;
+    }
+    g_equalizer.setReplayGainDb(db);
 }
 
-float playerGetVolume() { return g_volume; }
 /* ---------------------------------------------------- */
-/* LIFECYCLE                                           */
+/* LIFECYCLE                                            */
 /* ---------------------------------------------------- */
 void playerInit()
 {
@@ -277,35 +307,40 @@ void playerInit()
     g_state.shuffle = false;
     g_state.paused  = false;
 }
-void applyReplayGainFromMetadata(const Mp3MetadataEntry& meta)
-{
-    float db = 0.0f;
 
-    switch (g_settings.replayGainMode)
-    {
-        case REPLAYGAIN_TRACK:
-            if (meta.hasTrackReplayGain)
-                db = meta.replayGainDb;
-            break;
-
-        case REPLAYGAIN_ALBUM:
-            if (meta.hasAlbumReplayGain)
-                db = meta.replayGainAlbumDb;
-            break;
-
-        case REPLAYGAIN_OFF:
-        default:
-            db = 0.0f;
-            break;
-    }
-
-    g_equalizer.setReplayGainDb(db);
-}
 void playerShutdown()
 {
     playerStop();
     mpg123_exit();
 }
+
+/* ---------------------------------------------------- */
+/* INTERNAL STOP                                        */
+/* ---------------------------------------------------- */
+static void stopPlaybackInternal()
+{
+    audio.stop();
+
+    g_playbackState      = STATE_STOPPED;
+    g_crossfadeTargetIndex = -1;
+    g_metadataSwitched   = false;
+    g_crossfadeProgress  = 0.0f;
+    samplesPlayedNext    = 0;
+    g_preloadAttempted   = false;
+
+    closeNextDecoder();
+
+    if (mh)
+    {
+        mpg123_close(mh);
+        mpg123_delete(mh);
+        mh = nullptr;
+    }
+
+    audio.shutdown();
+    samplesPlayed = 0;
+}
+
 /* ---------------------------------------------------- */
 /* PLAYBACK CONTROL                                     */
 /* ---------------------------------------------------- */
@@ -327,22 +362,25 @@ void playerPlay(int index)
         return;
     }
 
-    mpg123_param(mh, MPG123_GAPLESS, 1, 0);
-    mpg123_param(mh, MPG123_ADD_FLAGS, MPG123_SKIP_ID3V2, 0);
-    mpg123_param(mh, MPG123_FORCE_STEREO, 1, 0);
+    mpg123_param(mh, MPG123_GAPLESS,      1,                 0);
+    mpg123_param(mh, MPG123_ADD_FLAGS,    MPG123_SKIP_ID3V2, 0);
+    mpg123_param(mh, MPG123_FORCE_STEREO, 1,                 0);
 
     if (mpg123_open(mh, path) != MPG123_OK)
     {
         printf("Error: failed to open %s\n", path);
+        mpg123_delete(mh);
+        mh = nullptr;
         return;
     }
 
-    long rate;
-    int ch, enc;
-
+    long rate; int ch, enc;
     if (mpg123_getformat(mh, &rate, &ch, &enc) != MPG123_OK)
     {
         printf("Error: failed to get format\n");
+        mpg123_close(mh);
+        mpg123_delete(mh);
+        mh = nullptr;
         return;
     }
 
@@ -351,69 +389,78 @@ void playerPlay(int index)
 
     g_state.sampleRate = rate;
     g_state.channels   = ch;
-    audio.init(rate, ch);        // or audio.initialize(...)
+
+    audio.init(rate, ch);
     audio.start();
     audio.setPaused(false);
-    off_t len = mpg123_length(mh);
-    g_state.durationSeconds =
-        (len > 0) ? (int)(len / rate) : 0;
 
-    samplesPlayed = 0;
+    off_t len = mpg123_length(mh);
+    g_state.durationSeconds = (len > 0) ? (int)(len / rate) : 0;
+
+    samplesPlayed        = 0;
     g_state.elapsedSeconds = 0;
+    g_preloadAttempted   = false;
+
     const Mp3MetadataEntry* meta = mp3GetTrackMetadata(index);
     if (meta)
-    {
         applyReplayGainFromMetadata(*meta);
-    }
-    // ✅ ReplayGain (ONLY feed data to EQ)
-    // const Mp3MetadataEntry* meta = mp3GetTrackMetadata(index);
-    //
-    // if (meta)
-    // {
-    //     if (meta->hasTrackReplayGain)
-    //     {
-    //         g_equalizer.setReplayGain(
-    //             meta->replayGainDb,
-    //             meta->replayGainPeak,
-    //             false
-    //         );
-    //     }
-    //
-    //     if (meta->hasAlbumReplayGain)
-    //     {
-    //         g_equalizer.setReplayGain(
-    //             meta->replayGainAlbumDb,
-    //             meta->replayGainAlbumPeak,
-    //             true
-    //         );
-    //     }
-    // }
 
     g_state.trackIndex = index;
-    g_state.playing = true;
-    g_state.paused  = false;
+    g_state.playing    = true;
+    g_state.paused     = false;
 
     playlistSetCurrentIndex(index);
-
     g_playbackState = STATE_PLAYING;
 
     printf("Playing: %s\n", path);
 }
 
+void playerStop()
+{
+    stopPlaybackInternal();
+    spectrumReset();
+    g_shuffleHistory.clear();
+    g_shufflePool.clear();
+    g_state.playing          = false;
+    g_state.paused           = false;
+    g_state.trackIndex       = -1;
+    g_state.elapsedSeconds   = 0;
+    g_state.durationSeconds  = 0;
+    g_playbackState          = STATE_STOPPED;
+}
 
+void playerTogglePause()
+{
+    if (!g_state.playing)
+        return;
+    g_state.paused = !g_state.paused;
+    audio.setPaused(g_state.paused);
+}
+
+// BUG FIX: playerNext() previously manually popped shuffle/queue AND then
+// called playerPlay() → playerCommitNextTrack() which popped them a second
+// time. Now playerNext() just calls playerPlay(); commit happens once inside
+// the gapless/crossfade switch paths or via playerCommitNextTrack() below.
+void playerNext()
+{
+    int nextIndex = playerPeekNextIndex();
+    if (nextIndex < 0)
+    {
+        playerStop();
+        return;
+    }
+    printf("NEXT → %d\n", nextIndex);
+    playerPlay(nextIndex);
+}
 
 void playerPrev()
 {
-    if (g_state.shuffle)
+    if (g_state.shuffle && !g_shuffleHistory.empty())
     {
-        if (!g_shuffleHistory.empty())
-        {
-            int prevIndex = g_shuffleHistory.back();
-            g_shuffleHistory.pop_back();
-
-            playerPlay(prevIndex);
-            return;
-        }
+        int prevIndex = g_shuffleHistory.back();
+        g_shuffleHistory.pop_back();
+        playerPlay(prevIndex);
+        return;
     }
 
     int count = playlistGetCount();
@@ -421,28 +468,27 @@ void playerPrev()
         return;
 
     int prevIndex = g_state.trackIndex - 1;
-
     if (prevIndex < 0)
-    {
-        if (g_state.repeat == REPEAT_ALL)
-            prevIndex = count - 1;
-        else
-            prevIndex = 0;
-    }
+        prevIndex = (g_state.repeat == REPEAT_ALL) ? count - 1 : 0;
 
     playerPlay(prevIndex);
 }
 
+void playerEnqueue(int index)
+{
+    if (index >= 0 && index < playlistGetCount())
+        g_playQueue.push_back(index);
+}
+
+// Manual crossfade trigger (e.g. from controller button)
 void playerStartCrossfade()
 {
     if (!g_settings.crossfadeEnabled)
         return;
-
     if (g_playbackState == STATE_CROSSFADING || mh_next != nullptr)
         return;
 
     int nextIndex = playerPeekNextIndex();
-
     if (nextIndex < 0)
     {
         playerStop();
@@ -456,53 +502,53 @@ void playerStartCrossfade()
     }
 
     g_crossfadeTargetIndex = nextIndex;
-    samplesPlayedNext = 0;
-    g_playbackState = STATE_CROSSFADING;
-    g_crossfadeProgress = 0.0f;
-    g_metadataSwitched = false;
+    samplesPlayedNext      = 0;
+    g_playbackState        = STATE_CROSSFADING;
+    g_crossfadeProgress    = 0.0f;
+    g_metadataSwitched     = false;
 }
 
-void playerStop()
+void playerSeek(float targetSeconds)
 {
-    stopPlaybackInternal();
-    spectrumReset();
-    g_shuffleHistory.clear();
-    g_shufflePool.clear();
-    g_state.playing = false;
-    g_state.paused  = false;
-    g_state.trackIndex = -1;
-    g_state.elapsedSeconds = 0;
-    g_state.durationSeconds = 0;
-    g_playbackState = STATE_STOPPED;
-}
-void playerTogglePause()
-{
-    if (!g_state.playing)
+    if (!mh || !g_state.playing)
         return;
 
-    g_state.paused = !g_state.paused;
+    if (targetSeconds < 0.0f)
+        targetSeconds = 0.0f;
+    if (targetSeconds > (float)g_state.durationSeconds)
+        targetSeconds = (float)g_state.durationSeconds;
+
+    off_t targetSample = (off_t)(targetSeconds * g_state.sampleRate);
+
+    audio.setPaused(true);
+    if (mpg123_seek(mh, targetSample, SEEK_SET) >= 0)
+    {
+        samplesPlayed          = (uint64_t)targetSample;
+        g_state.elapsedSeconds = (int)targetSeconds;
+    }
     audio.setPaused(g_state.paused);
+
+    // Cancel any pending crossfade/preload so the trigger window is recalculated
+    g_crossfadeTargetIndex = -1;
+    g_metadataSwitched     = false;
+    g_preloadAttempted     = false; // BUG FIX: was missing; seek back = preload must retry
+    closeNextDecoder();
 }
 
-bool playerIsShuffleEnabled()
-{
-    return g_state.shuffle;
-}
+/* ---------------------------------------------------- */
+/* SHUFFLE / REPEAT                                     */
+/* ---------------------------------------------------- */
+bool playerIsShuffleEnabled() { return g_state.shuffle; }
 
 void playerToggleShuffle()
 {
     g_state.shuffle = !g_state.shuffle;
-
     if (g_state.shuffle)
     {
         rebuildShufflePool();
         g_shuffleHistory.clear();
-
-        auto it = std::find(
-            g_shufflePool.begin(),
-            g_shufflePool.end(),
-            g_state.trackIndex
-        );
+        // Don't include the currently playing track in the upcoming pool
+        auto it = std::find(g_shufflePool.begin(), g_shufflePool.end(), g_state.trackIndex);
         if (it != g_shufflePool.end())
             g_shufflePool.erase(it);
     }
@@ -512,43 +558,9 @@ void playerToggleShuffle()
         g_shuffleHistory.clear();
     }
 }
-static void stopPlaybackInternal()
-{
-    // Stop playback immediately
-    audio.stop();
-    //  Reset crossfade + decoder state
-    g_playbackState = STATE_STOPPED;
-    g_crossfadeTargetIndex = -1;
-    g_metadataSwitched = false;
-    g_crossfadeProgress = 0.0f;
-    samplesPlayedNext = 0;
-    // Kill next decoder if exists
-    if (mh_next)
-    {
-        mpg123_close(mh_next);
-        mpg123_delete(mh_next);
-        mh_next = nullptr;
-    }
-    // Close current decoder
-    if (mh) {
-        mpg123_close(mh);
-        mpg123_delete(mh);
-        mh = nullptr;
-    }
-    // HARD RESET AUDIO (this is the important part)
-    audio.shutdown();
-    samplesPlayed = 0;
-}
 
-RepeatMode playerGetRepeatMode()
-{
-    return g_state.repeat;
-}
-
-bool playerIsRepeatEnabled()
-{
-    return g_state.repeat != REPEAT_OFF;
-}
+RepeatMode playerGetRepeatMode()    { return g_state.repeat; }
+bool       playerIsRepeatEnabled()  { return g_state.repeat != REPEAT_OFF; }
 
 void playerCycleRepeat()
 {
@@ -562,90 +574,9 @@ void playerCycleRepeat()
 
 float playerGetPosition()
 {
-    if (!g_state.playing)
-        return 0.0f;
-
-    return (float)g_state.elapsedSeconds;
+    return g_state.playing ? (float)g_state.elapsedSeconds : 0.0f;
 }
 
-void playerSeek(float targetSeconds)
-{
-    if (!mh || !g_state.playing)
-        return;
-
-    if (targetSeconds < 0.0f)
-        targetSeconds = 0.0f;
-
-    if (targetSeconds > g_state.durationSeconds)
-        targetSeconds = (float)g_state.durationSeconds;
-
-    off_t targetSample =
-        (off_t)(targetSeconds * g_state.sampleRate);
-
-    // Stop audio output while seeking
-    audio.setPaused(true);
-
-    if (mpg123_seek(mh, targetSample, SEEK_SET) >= 0) {
-        samplesPlayed = targetSample;
-        g_state.elapsedSeconds = (int)targetSeconds;
-    }
-    audio.setPaused(g_state.paused);
-    g_crossfadeTargetIndex = -1;
-    g_metadataSwitched = false;
-    if (mh_next)
-    {
-        mpg123_close(mh_next);
-        mpg123_delete(mh_next);
-        mh_next = nullptr;
-    }
-}
-
-
-void playerNext()
-{
-    int nextIndex = playerPeekNextIndex();
-    if (nextIndex < 0)
-    {
-        playerStop();
-        return;
-    }
-    /* -------------------------------------- */
-    /* HANDLE SHUFFLE HISTORY CLEANLY         */
-    /* -------------------------------------- */
-    if (g_state.shuffle && g_state.trackIndex >= 0)
-    {
-        g_shuffleHistory.push_back(g_state.trackIndex);
-        if (g_shuffleHistory.size() > SHUFFLE_MEMORY)
-        {
-            g_shuffleHistory.erase(g_shuffleHistory.begin());
-        }
-        // Remove chosen track from pool
-        auto it = std::find(
-            g_shufflePool.begin(),
-            g_shufflePool.end(),
-            nextIndex
-        );
-
-        if (it != g_shufflePool.end())
-            g_shufflePool.erase(it);
-    }
-    /* -------------------------------------- */
-    /* HANDLE QUEUE                           */
-    /* -------------------------------------- */
-    if (!g_playQueue.empty() &&
-        nextIndex == g_playQueue.front())
-    {
-        g_playQueue.erase(g_playQueue.begin());
-    }
-    /* -------------------------------------- */
-    /* DEBUG (optional)                       */
-    /* -------------------------------------- */
-    printf("NEXT → %d\n", nextIndex);
-    /* -------------------------------------- */
-    /* PLAY                                   */
-    /* -------------------------------------- */
-    playerPlay(nextIndex);
-}
 /* ---------------------------------------------------- */
 /* UPDATE LOOP                                          */
 /* ---------------------------------------------------- */
@@ -653,152 +584,143 @@ void playerUpdate()
 {
     if (!mh || !g_state.playing || g_state.paused)
         return;
-    const size_t TARGET_SAMPLES =
-        g_state.sampleRate * g_state.channels / 10;
+
+    const size_t TARGET_SAMPLES = g_state.sampleRate * g_state.channels / 10;
+
+    // Stack buffers — avoids the static aliasing hazard of the original
+    float floatPCM[FLOAT_BUF_FRAMES * 2];
+    float pcm1    [FLOAT_BUF_FRAMES * 2];
+    float pcm2    [FLOAT_BUF_FRAMES * 2];
 
     while (audio.availableRead() < TARGET_SAMPLES)
     {
         unsigned char buffer[DECODE_BUFFER];
         size_t done = 0;
-
         int err = mpg123_read(mh, buffer, sizeof(buffer), &done);
 
-        /* ===================================================== */
-        /* STATE: PLAYING                                        */
-        /* ===================================================== */
+        /* ================================================= */
+        /* STATE: PLAYING                                     */
+        /* ================================================= */
         if (g_playbackState == STATE_PLAYING)
         {
-
             if (done > 0)
             {
-                int frames = done / (sizeof(int16_t) * g_state.channels);
+                int frames = (int)(done / (sizeof(int16_t) * g_state.channels));
+                samplesPlayed          += frames;
+                g_state.elapsedSeconds  = (int)(samplesPlayed / g_state.sampleRate);
 
-                samplesPlayed += frames;
-                g_state.elapsedSeconds =
-                    (int)(samplesPlayed / g_state.sampleRate);
-                    //printf("PCM push: %zu samples\n", frames * 2);
-                static float floatPCM[4096 * 2];
-                processSamplesToFloat(
-                    (int16_t*)buffer,
-                    floatPCM,
-                    frames,
-                    g_state.channels
-                );
-
+                processSamplesToFloat((int16_t*)buffer, floatPCM, frames, g_state.channels);
                 audio.pushPCM(floatPCM, frames * 2);
             }
-            int samplesRemaining =
-                (g_state.durationSeconds * g_state.sampleRate) - samplesPlayed;
 
-            int preloadSamples = g_state.sampleRate; // 1 second
+            // Compute AFTER updating samplesPlayed.
+            // int64_t avoids unsigned underflow when samplesPlayed slightly
+            // overshoots the duration estimate (common with VBR files).
+            int64_t samplesRemaining =
+                ((int64_t)g_state.durationSeconds * g_state.sampleRate)
+                - (int64_t)samplesPlayed;
 
-            static bool preloadAttempted = false;
-
+            /* ---- gapless preload (crossfade OFF) ---- */
             if (!g_settings.crossfadeEnabled &&
                 mh_next == nullptr &&
-                !preloadAttempted &&
-                samplesRemaining <= preloadSamples)
+                !g_preloadAttempted &&
+                samplesRemaining <= (int64_t)g_state.sampleRate) // 1 s window
+            {
+                int nextIndex = playerPeekNextIndex();
+                if (nextIndex >= 0 && openNextDecoder(nextIndex))
+                    g_preloadAttempted = true;
+            }
+
+            /* ---- stream ended: gapless hard-switch ---- */
+            if (err == MPG123_DONE)
             {
                 int nextIndex = playerPeekNextIndex();
                 if (nextIndex >= 0)
                 {
-                    if (openNextDecoder(nextIndex))
-                        preloadAttempted = true;
-                }
-            }
+                    // Use preloaded decoder if ready, otherwise open now
+                    if (mh_next == nullptr)
+                        openNextDecoder(nextIndex);
 
-            if (err == MPG123_DONE)
-            {
-                int nextIndex = playerPeekNextIndex();
-
-                if (nextIndex >= 0 && openNextDecoder(nextIndex))
-                {
-                    // instant switch (gapless!)
-                    mpg123_close(mh);
-                    mpg123_delete(mh);
-
-                    mh = mh_next;
-                    mh_next = nullptr;
-
-                    playerCommitNextTrack(nextIndex);
-
-                    long rate;
-                    int ch, enc;
-
-                    if (mpg123_getformat(mh, &rate, &ch, &enc) == MPG123_OK)
+                    if (mh_next != nullptr)
                     {
-                        g_state.sampleRate = rate;
-                        g_state.channels   = ch;
+                        mpg123_close(mh);
+                        mpg123_delete(mh);
+                        mh      = mh_next;
+                        mh_next = nullptr;
+
+                        playerCommitNextTrack(nextIndex);
+
+                        long rate; int ch, enc;
+                        if (mpg123_getformat(mh, &rate, &ch, &enc) == MPG123_OK)
+                        {
+                            g_state.sampleRate = rate;
+                            g_state.channels   = ch;
+                        }
+
+                        samplesPlayed          = 0;
+                        g_state.elapsedSeconds = 0;
+                        g_preloadAttempted     = false;
+
+                        off_t len = mpg123_length(mh);
+                        g_state.durationSeconds =
+                            (len > 0) ? (int)(len / g_state.sampleRate) : 0;
+
+                        continue; // decode next track immediately, no gap
                     }
-
-                    samplesPlayed = 0;
-                    g_state.elapsedSeconds = 0;
-
-                    off_t len = mpg123_length(mh);
-                    g_state.durationSeconds =
-                        (len > 0) ? (int)(len / g_state.sampleRate) : 0;
-
-                    continue; // keep decoding WITHOUT GAP
                 }
-                if (mh_next)
-                {
-                    mpg123_close(mh_next);
-                    mpg123_delete(mh_next);
-                    mh_next = nullptr;
-                }
+
+                // No next track (or open failed) — stop cleanly
+                // BUG FIX: original fell through leaving STATE_PLAYING with a
+                // dead decoder, causing an infinite loop of failed reads.
+                closeNextDecoder();
+                g_playbackState = STATE_DRAINING;
+                break;
             }
 
-            /* ---- trigger crossfade ---- */
-            // int samplesRemaining =
-            //     (g_state.durationSeconds * g_state.sampleRate) - samplesPlayed;
+            /* ---- crossfade trigger ---- */
+            int64_t crossfadeSamples =
+                (int64_t)(g_settings.crossfadeSeconds * g_state.sampleRate);
 
-            int crossfadeSamples =
-                (int)(g_settings.crossfadeSeconds * g_state.sampleRate);
-
-            if (g_playbackState == STATE_PLAYING &&
-                g_settings.crossfadeEnabled &&
+            if (g_settings.crossfadeEnabled &&
                 mh_next == nullptr &&
                 samplesRemaining > 0 &&
                 samplesRemaining <= crossfadeSamples)
             {
                 int nextIndex = playerPeekNextIndex();
-
                 if (nextIndex >= 0 && openNextDecoder(nextIndex))
                 {
                     g_crossfadeTargetIndex = nextIndex;
-                    g_crossfadeProgress = 0.0f;
-                    g_metadataSwitched = false;
-                    samplesPlayedNext = 0;
-
-                    g_playbackState = STATE_CROSSFADING;
+                    g_crossfadeProgress    = 0.0f;
+                    g_metadataSwitched     = false;
+                    samplesPlayedNext      = 0;
+                    g_playbackState        = STATE_CROSSFADING;
+                }
+                else if (nextIndex < 0)
+                {
+                    // Last track, crossfade disabled for this transition
+                    // (no next track to fade into — just let it play out)
                 }
             }
         }
-        /* ===================================================== */
-        /* STATE: CROSSFADING                                    */
-        /* ===================================================== */
+        /* ================================================= */
+        /* STATE: CROSSFADING                                 */
+        /* ================================================= */
         else if (g_playbackState == STATE_CROSSFADING)
         {
             unsigned char buffer2[DECODE_BUFFER];
             size_t done2 = 0;
-
             mpg123_read(mh_next, buffer2, sizeof(buffer2), &done2);
 
             if (done == 0 && done2 == 0)
             {
+                // Both streams exhausted — drain whatever's left in the hw buffer
                 g_playbackState = STATE_DRAINING;
                 break;
             }
 
-            int frames1 = done  / (sizeof(int16_t) * g_state.channels);
-            int frames2 = done2 / (sizeof(int16_t) * g_state.channels);
+            int frames1   = (done  > 0) ? (int)(done  / (sizeof(int16_t) * g_state.channels)) : 0;
+            int frames2   = (done2 > 0) ? (int)(done2 / (sizeof(int16_t) * g_state.channels)) : 0;
             int mixFrames = std::min(frames1, frames2);
-
-            static float pcm1[4096 * 2];
-            static float pcm2[4096 * 2];
-
-            processSamplesToFloat((int16_t*)buffer,  pcm1, mixFrames, g_state.channels);
-            processSamplesToFloat((int16_t*)buffer2, pcm2, mixFrames, g_state.channels);
 
             float duration = g_settings.crossfadeSeconds;
             if (duration < 0.01f) duration = 0.01f;
@@ -806,87 +728,119 @@ void playerUpdate()
             float t = g_crossfadeProgress / duration;
             if (t > 1.0f) t = 1.0f;
 
-            float fadeOut = cosf(t * 1.5707963f);
-            float fadeIn  = sinf(t * 1.5707963f);
+            float fadeOut = cosf(t * 1.5707963f); // cos(0..90°): 1 → 0
+            float fadeIn  = sinf(t * 1.5707963f); // sin(0..90°): 0 → 1
 
-            for (int i = 0; i < mixFrames * 2; i++)
+            if (mixFrames > 0)
             {
-                pcm1[i] = pcm1[i] * fadeOut + pcm2[i] * fadeIn;
+                processSamplesToFloat((int16_t*)buffer,  pcm1, mixFrames, g_state.channels);
+                processSamplesToFloat((int16_t*)buffer2, pcm2, mixFrames, g_state.channels);
+
+                for (int i = 0; i < mixFrames * 2; i++)
+                    pcm1[i] = pcm1[i] * fadeOut + pcm2[i] * fadeIn;
+
+                audio.pushPCM(pcm1, mixFrames * 2);
+
+                // BUG FIX: samplesPlayedNext previously only advanced when BOTH
+                // streams had data (mixFrames = min(f1,f2)). If the old track
+                // ran out first (frames1=0 → mixFrames=0), the counter froze at
+                // near-zero. When the crossfade completed, samplesPlayed was set
+                // to this near-zero value, making the new track appear to have
+                // just started with almost its full duration remaining. That
+                // caused samplesRemaining > crossfadeSamples to immediately
+                // re-trigger, firing a second crossfade into the *next* next
+                // track — producing the observed "song N+1 skipped" symptom.
+                //
+                // Fix: advance by frames2 (incoming track's actual progress),
+                // not by mixFrames. This correctly tracks where we are in the
+                // incoming track regardless of whether the outgoing one has data.
+                samplesPlayedNext += frames2;
+
+                g_crossfadeProgress += (float)frames2 / g_state.sampleRate;
+            }
+            else
+            {
+                // One stream is dry but the other has data — just advance time
+                // based on whichever stream is still live so we don't stall.
+                int liveFrames = std::max(frames1, frames2);
+                g_crossfadeProgress += (float)liveFrames / g_state.sampleRate;
+                samplesPlayedNext   += (uint64_t)frames2;
             }
 
-            audio.pushPCM(pcm1, mixFrames * 2);
-
-            g_crossfadeProgress +=
-                (float)mixFrames / g_state.sampleRate;
-
-            samplesPlayedNext += mixFrames;
-
-            /* ---- switch metadata halfway ---- */
+            /* ---- switch metadata at the halfway point ---- */
             if (!g_metadataSwitched && t >= 0.5f)
             {
                 playerCommitNextTrack(g_crossfadeTargetIndex);
                 g_metadataSwitched = true;
             }
 
-            /* ---- finish crossfade ---- */
+            /* ---- crossfade complete ---- */
             if (g_crossfadeProgress >= duration)
             {
                 mpg123_close(mh);
                 mpg123_delete(mh);
-
-                mh = mh_next;
+                mh      = mh_next;
                 mh_next = nullptr;
 
-                long rate;
-                int ch, enc;
+                // Commit metadata now if we somehow never hit the 0.5 threshold
+                if (!g_metadataSwitched)
+                {
+                    playerCommitNextTrack(g_crossfadeTargetIndex);
+                    g_metadataSwitched = true;
+                }
 
+                long rate; int ch, enc;
                 if (mpg123_getformat(mh, &rate, &ch, &enc) == MPG123_OK)
                 {
                     g_state.sampleRate = rate;
                     g_state.channels   = ch;
                 }
 
-                samplesPlayed = samplesPlayedNext;
-
-                g_state.elapsedSeconds =
-                    (int)(samplesPlayed / g_state.sampleRate);
+                // samplesPlayedNext is the count of frames already decoded from
+                // the new track — use it as the starting position so elapsed
+                // time is correct and the crossfade trigger isn't immediately
+                // re-fired on the next update.
+                samplesPlayed          = samplesPlayedNext;
+                g_state.elapsedSeconds = (int)(samplesPlayed / g_state.sampleRate);
 
                 off_t len = mpg123_length(mh);
                 g_state.durationSeconds =
                     (len > 0) ? (int)(len / g_state.sampleRate) : 0;
 
                 g_crossfadeTargetIndex = -1;
-                g_metadataSwitched = false;
-
-                g_playbackState = STATE_PLAYING;
+                g_metadataSwitched     = false;
+                g_preloadAttempted     = false;
+                g_playbackState        = STATE_PLAYING;
             }
         }
-
-        /* ===================================================== */
-        /* STATE: DRAINING                                       */
-        /* ===================================================== */
+        /* ================================================= */
+        /* STATE: DRAINING                                    */
+        /* ================================================= */
         else if (g_playbackState == STATE_DRAINING)
         {
-            // No decoding, just wait for buffer to empty
-            break;
+            break; // just wait for the hw buffer to empty
         }
-    }
+    } // end while
 
-    /* ===================================================== */
-    /* DRAIN COMPLETE → NEXT TRACK                           */
-    /* ===================================================== */
-    if (g_playbackState == STATE_DRAINING &&
-        audio.availableRead() == 0)
+    /* ---- drain complete → decide what to do next ---- */
+    if (g_playbackState == STATE_DRAINING && audio.availableRead() == 0)
     {
-        playerNext();
+        int nextIndex = playerPeekNextIndex();
+        if (nextIndex >= 0)
+            playerNext();      // more tracks to play
+        else
+            playerStop();      // BUG FIX: was calling playerNext() which called
+                               // playerStop() anyway, but left a frame where
+                               // g_state.playing was true with a dead decoder.
     }
 }
+
 /* ---------------------------------------------------- */
 /* GETTERS                                              */
 /* ---------------------------------------------------- */
-const PlayerState* playerGetState() { return &g_state; }
-bool playerIsPlaying() { return g_state.playing; }
-bool playerIsPaused() { return g_state.playing && g_state.paused; }
-int playerGetCurrentTrackIndex() { return g_state.trackIndex; }
-int playerGetElapsedSeconds() { return g_state.elapsedSeconds; }
-int playerGetTrackLength() { return g_state.durationSeconds; }
+const PlayerState* playerGetState()          { return &g_state; }
+bool               playerIsPlaying()         { return g_state.playing; }
+bool               playerIsPaused()          { return g_state.playing && g_state.paused; }
+int                playerGetCurrentTrackIndex() { return g_state.trackIndex; }
+int                playerGetElapsedSeconds() { return g_state.elapsedSeconds; }
+int                playerGetTrackLength()    { return g_state.durationSeconds; }
