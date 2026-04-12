@@ -20,6 +20,12 @@
 #define FFT_SIZE 1024
 #define SPECTRUM_BARS 20
 
+
+#define EQ_BAR_WIDTH   244
+#define EQ_BAR_HEIGHT  21
+#define EQ_KNOB_W      37
+#define EQ_KNOB_H      37
+
 bool autoEQEnabled = false;
 
 static kiss_fftr_cfg fftCfg = NULL;
@@ -590,7 +596,7 @@ static void drawMonoStereo(SDL_Renderer* renderer, TTF_Font* font, const Mp3Meta
     Uint8 glowGreen = (Uint8)(130 + 115 * glowWave);   // 140–255
 
     // --- Mono text ---
-    SDL_Color monoColor = {255, 255, 255, 255}; // default white
+    SDL_Color monoColor = {171, 169, 169, 255}; // default grey
     if (monoActive)
     {
         monoColor.r = 0;
@@ -600,7 +606,7 @@ static void drawMonoStereo(SDL_Renderer* renderer, TTF_Font* font, const Mp3Meta
     drawVerticalText(renderer, font, "Mono", monoRect, monoColor);
 
     // --- Stereo text ---
-    SDL_Color stereoColor = {255, 255, 255, 255}; // default white
+    SDL_Color stereoColor = {171, 169, 169, 255}; // default grey
     if (stereoActive)
     {
         stereoColor.r = 0;
@@ -958,68 +964,187 @@ static void drawPlaylistSlider(SDL_Renderer* renderer,
     SDL_RenderCopy(renderer, knobTex, NULL, &dstKnob);
 }
 
-static void drawPreampSlider(SDL_Renderer* renderer)
+// static void drawPreampSlider(SDL_Renderer* renderer)
+// {
+//     if (!renderer) return;
+//
+//     SDL_Rect track = {725, 90, 346, 30};
+//
+//     // --- Draw track background ---
+//     SDL_SetRenderDrawColor(renderer, 250, 229, 37, 200);
+//     SDL_RenderFillRect(renderer, &track);
+//
+//     // --- Normalize preamp -12 → +12 ---
+//     float db = g_equalizer.getPreamp();
+//     float t = (db + 12.0f) / 24.0f;
+//
+//     if (t < 0.0f) t = 0.0f;
+//     if (t > 1.0f) t = 1.0f;
+//
+//     // --- Knob ---
+//     const int knobW = 45;
+//     const int knobH = track.h;
+//
+//     int travel = track.w - knobW;
+//     int knobX  = track.x + (int)(t * travel);
+//     int knobY  = track.y;
+//
+//     SDL_Rect knob = { knobX, knobY, knobW, knobH };
+//
+//     SDL_SetRenderDrawColor(renderer, 5, 5, 5, 200); // single color (red)
+//     SDL_RenderFillRect(renderer, &knob);
+// }
+//
+// static void drawEQBandSlider(SDL_Renderer* renderer,
+//                              int bandIndex,
+//                              const SDL_Rect& track)
+// {
+//     if (!renderer) return;
+//
+//     // Track background
+//     SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
+//     SDL_RenderFillRect(renderer, &track);
+//
+//     float db = g_equalizer.getBand(bandIndex);
+//
+//     // Normalize -12 → +12 into 0 → 1
+//     float t = (db + 12.0f) / 24.0f;
+//
+//     if (t < 0.0f) t = 0.0f;
+//     if (t > 1.0f) t = 1.0f;
+//
+//     const int knobW = 45;
+//     int travel = track.w - knobW;
+//     int knobX  = track.x + (int)(t * travel);
+//
+//     SDL_Rect knob = { knobX, track.y, knobW, track.h };
+//
+//     SDL_SetRenderDrawColor(renderer, 5, 5, 5, 200);
+//     SDL_RenderFillRect(renderer, &knob);
+// }
+//
+static void drawPreampSlider(SDL_Renderer* renderer,
+                             SDL_Texture* texEQ,
+                             const SDL_Rect& track)
 {
-    if (!renderer) return;
+    if (!renderer || !texEQ) return;
 
-    SDL_Rect track = {720, 91, 346, 33};
-
-    // --- Draw track background ---
-    SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
-    SDL_RenderFillRect(renderer, &track);
-
-    // --- Normalize preamp -12 → +12 ---
     float db = g_equalizer.getPreamp();
-    float t = (db + 12.0f) / 24.0f;
 
+    float t = (db + 12.0f) / 24.0f;
     if (t < 0.0f) t = 0.0f;
     if (t > 1.0f) t = 1.0f;
 
-    // --- Knob ---
-    const int knobW = 20;
-    const int knobH = track.h;
+    int level = (int)(t * 27.0f + 0.5f);
+    if (level < 0) level = 0;
+    if (level > 27) level = 27;
 
-    int travel = track.w - knobW;
+    int srcX, srcY;
+
+    if (level < 14)
+    {
+        srcX = 356;
+        srcY = 66 + (level * 60);
+    }
+    else
+    {
+        srcX = 96;
+        srcY = 66 + ((level - 14) * 60);
+    }
+
+    // ✅ SOURCE = texture size
+    SDL_Rect srcBar = { srcX, srcY, 244, 21 };
+
+    // ✅ DEST = your UI layout (340x33)
+    SDL_Rect dstBar = {
+        track.x,
+        track.y,
+        track.w,
+        track.h
+    };
+
+    SDL_RenderCopy(renderer, texEQ, &srcBar, &dstBar);
+
+    // --- KNOB ---
+    SDL_Rect srcKnob = { 564, 3, 37, 37 };
+
+    // ✅ movement based on UI size, NOT texture size
+    int travel = track.w - srcKnob.w;
     int knobX  = track.x + (int)(t * travel);
-    int knobY  = track.y;
 
-    SDL_Rect knob = { knobX, knobY, knobW, knobH };
+    SDL_Rect dstKnob = {
+        knobX,
+        track.y + (track.h - srcKnob.h) / 2, // center vertically
+        srcKnob.w,
+        srcKnob.h
+    };
 
-    SDL_SetRenderDrawColor(renderer, 200, 0, 0, 255); // single color (red)
-    SDL_RenderFillRect(renderer, &knob);
+    SDL_RenderCopy(renderer, texEQ, &srcKnob, &dstKnob);
 }
 
 static void drawEQBandSlider(SDL_Renderer* renderer,
+                             SDL_Texture* texEQ,
                              int bandIndex,
                              const SDL_Rect& track)
 {
-    if (!renderer) return;
-
-    // Track background
-    SDL_SetRenderDrawColor(renderer, 40, 40, 40, 255);
-    SDL_RenderFillRect(renderer, &track);
+    if (!renderer || !texEQ) return;
 
     float db = g_equalizer.getBand(bandIndex);
 
-    // Normalize -12 → +12 into 0 → 1
     float t = (db + 12.0f) / 24.0f;
-
     if (t < 0.0f) t = 0.0f;
     if (t > 1.0f) t = 1.0f;
 
-    const int knobW = 20;
-    int travel = track.w - knobW;
+    int level = (int)(t * 27.0f + 0.5f);
+    if (level < 0) level = 0;
+    if (level > 27) level = 27;
+
+    int srcX, srcY;
+
+    if (level < 14)
+    {
+        srcX = 356;
+        srcY = 66 + (level * 60);
+    }
+    else
+    {
+        srcX = 96;
+        srcY = 66 + ((level - 14) * 60);
+    }
+
+    // ✅ SOURCE = texture pixels
+    SDL_Rect srcBar = { srcX, srcY, 244, 21 };
+
+    // ✅ DEST = your layout
+    SDL_Rect dstBar = {
+        track.x,
+        track.y,
+        track.w,
+        track.h
+    };
+
+    SDL_RenderCopy(renderer, texEQ, &srcBar, &dstBar);
+
+    // --- KNOB ---
+    SDL_Rect srcKnob = { 564, 3, 37, 37 };
+
+    int travel = track.w - srcKnob.w;
     int knobX  = track.x + (int)(t * travel);
 
-    SDL_Rect knob = { knobX, track.y, knobW, track.h };
+    SDL_Rect dstKnob = {
+        knobX,
+        track.y + (track.h - srcKnob.h) / 2,
+        srcKnob.w,
+        srcKnob.h
+    };
 
-    SDL_SetRenderDrawColor(renderer, 200, 0, 0, 255);
-    SDL_RenderFillRect(renderer, &knob);
+    SDL_RenderCopy(renderer, texEQ, &srcKnob, &dstKnob);
 }
 
 
+
 // --- Render full UI ---
-void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, SDL_Texture* texVolume, SDL_Texture* texPan,  SDL_Texture* texPlaylistKnob, SDL_Texture* texCbuttons, SDL_Texture* texSHUFREP, const char* songText)
+void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Texture* skin, SDL_Texture* texProgIndicator, SDL_Texture* texVolume, SDL_Texture* texPan,  SDL_Texture* texPlaylistKnob, SDL_Texture* texCbuttons, SDL_Texture* texSHUFREP,  SDL_Texture* texEQMAIN,const char* songText)
 {
   if (!fftInitialized)
   {
@@ -1115,17 +1240,17 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
 
     renderEQCurve(renderer);
 
-    SDL_Rect eqBand1       = {720,   91,346, 33}; //preamp
-    SDL_Rect eqBand2       = {720,  315,346, 33};
-    SDL_Rect eqBand3       = {720,  387,346, 33};
-    SDL_Rect eqBand4       = {720,  457,346, 33};
-    SDL_Rect eqBand5       = {720,  532,346, 33};
-    SDL_Rect eqBand6       = {720,  603,346, 33};
-    SDL_Rect eqBand7       = {720,  671,346, 33};
-    SDL_Rect eqBand8       = {720,  743,346, 33};
-    SDL_Rect eqBand9       = {720,  813,346, 33};
-    SDL_Rect eqBand10      = {720,  885,346, 33};
-    SDL_Rect eqBand11      = {720,  953,346, 33};
+    SDL_Rect eqBand1       = {730,   90,340, 33}; //preamp
+    SDL_Rect eqBand2       = {730,  315,340, 33};
+    SDL_Rect eqBand3       = {730,  387,340, 33};
+    SDL_Rect eqBand4       = {730,  457,340, 33};
+    SDL_Rect eqBand5       = {730,  532,340, 33};
+    SDL_Rect eqBand6       = {730,  603,340, 33};
+    SDL_Rect eqBand7       = {730,  671,340, 33};
+    SDL_Rect eqBand8       = {730,  743,340, 33};
+    SDL_Rect eqBand9       = {730,  813,340, 33};
+    SDL_Rect eqBand10      = {730,  885,340, 33};
+    SDL_Rect eqBand11      = {730,  953,340, 33};
 
     SDL_Rect eqPreset1     = {1112,  53, 73,104};
     SDL_Rect eqPreset2     = {1112, 153, 73,131};
@@ -1135,18 +1260,29 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
 
     drawPlaylistSlider(renderer, texPlaylistKnob);
 
-    drawEQBandSlider(renderer, 1, eqBand2);
-    drawEQBandSlider(renderer, 2, eqBand3);
-    drawEQBandSlider(renderer, 3, eqBand4);
-    drawEQBandSlider(renderer, 4, eqBand5);
-    drawEQBandSlider(renderer, 5, eqBand6);
-    drawEQBandSlider(renderer, 6, eqBand7);
-    drawEQBandSlider(renderer, 7, eqBand8);
-    drawEQBandSlider(renderer, 8, eqBand9);
-    drawEQBandSlider(renderer, 9, eqBand10);
-    drawEQBandSlider(renderer,10, eqBand11);
+    // drawEQBandSlider(renderer, 1, eqBand2);
+    // drawEQBandSlider(renderer, 2, eqBand3);
+    // drawEQBandSlider(renderer, 3, eqBand4);
+    // drawEQBandSlider(renderer, 4, eqBand5);
+    // drawEQBandSlider(renderer, 5, eqBand6);
+    // drawEQBandSlider(renderer, 6, eqBand7);
+    // drawEQBandSlider(renderer, 7, eqBand8);
+    // drawEQBandSlider(renderer, 8, eqBand9);
+    // drawEQBandSlider(renderer, 9, eqBand10);
+    // drawEQBandSlider(renderer,10, eqBand11);
+    drawEQBandSlider(renderer, texEQMAIN, 1, eqBand2);
+    drawEQBandSlider(renderer, texEQMAIN, 2, eqBand3);
+    drawEQBandSlider(renderer, texEQMAIN, 3, eqBand4);
+    drawEQBandSlider(renderer, texEQMAIN, 4, eqBand5);
+    drawEQBandSlider(renderer, texEQMAIN, 5, eqBand6);
+    drawEQBandSlider(renderer, texEQMAIN, 6, eqBand7);
+    drawEQBandSlider(renderer, texEQMAIN, 7, eqBand8);
+    drawEQBandSlider(renderer, texEQMAIN, 8, eqBand9);
+    drawEQBandSlider(renderer, texEQMAIN, 9, eqBand10);
+    drawEQBandSlider(renderer, texEQMAIN, 10, eqBand11);
 
-    drawPreampSlider(renderer);
+    //drawPreampSlider(renderer);
+    drawPreampSlider(renderer, texEQMAIN, eqBand1);
 
 //    SDL_Rect volumeSlider  = {1551, 421,40,264};
 
@@ -1165,17 +1301,17 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     SDL_Rect Duration      = {45, 765,50,100};
     SDL_Rect TotPylDurat   = {109, 512,63, 358};
 
-    drawRect(renderer, eqBand1, 0,0,255,150);
-    drawRect(renderer, eqBand2, 0,255,255,150);
-    drawRect(renderer, eqBand3, 255,0,255,150);
-    drawRect(renderer, eqBand4, 255,255,0,150);
-    drawRect(renderer, eqBand5, 0,255,255,150);
-    drawRect(renderer, eqBand6, 255,0,255,150);
-    drawRect(renderer, eqBand7, 255,255,0,150);
-    drawRect(renderer, eqBand8, 100,100,200,150);
-    drawRect(renderer, eqBand9, 0,255,255,150);
-    drawRect(renderer, eqBand10, 255,0,255,150);
-    drawRect(renderer, eqBand11, 100,100,200,150);
+    // drawRect(renderer, eqBand1, 250, 229, 37,150);
+    // drawRect(renderer, eqBand2, 250, 229, 37,150);
+    // drawRect(renderer, eqBand3, 250, 229, 37,150);
+    // drawRect(renderer, eqBand4, 250, 229, 37,150);
+    // drawRect(renderer, eqBand5, 250, 229, 37,150);
+    // drawRect(renderer, eqBand6, 250, 229, 37,150);
+    // drawRect(renderer, eqBand7, 250, 229, 37,150);
+    // drawRect(renderer, eqBand8, 250, 229, 37,150);
+    // drawRect(renderer, eqBand9, 250, 229, 37,150);
+    // drawRect(renderer, eqBand10, 250, 229, 37,150);
+    // drawRect(renderer, eqBand11, 250, 229, 37,150);
 
     if (g_equalizer.isEnabled())
     {

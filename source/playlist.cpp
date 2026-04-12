@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include "mp3.h"
+#include "flac.h"
 #include <stdio.h>
 #include "filebrowser.h"
 #include "player.h"
@@ -128,7 +129,8 @@ void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font)
         if (!trackPath) continue;
 
         const Mp3MetadataEntry* md = mp3GetTrackMetadata(idx);
-        if (!md) continue;
+        if (!md) md = flacGetTrackMetadata(idx);
+        // If still null, render a fallback line using the filename
 
 
         char line[256];

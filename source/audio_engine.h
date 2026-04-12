@@ -24,7 +24,7 @@ public:
 
     void pushPCM(const float* data, size_t samples);
     void setPaused(bool p);
-
+    size_t getBufferedSamples() const;
     size_t availableRead() const;
     size_t availableWrite() const;
 

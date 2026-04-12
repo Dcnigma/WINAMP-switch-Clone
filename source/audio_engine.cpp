@@ -44,11 +44,15 @@ void AudioEngine::setPaused(bool p) {
 
 size_t AudioEngine::availableRead() const
 {
+
     size_t r = readPos.load(std::memory_order_acquire);
     size_t w = writePos.load(std::memory_order_acquire);
     return w - r;
 }
-
+size_t AudioEngine::getBufferedSamples() const
+{
+    return availableRead();
+}
 size_t AudioEngine::availableWrite() const
 {
     size_t r = readPos.load(std::memory_order_acquire);

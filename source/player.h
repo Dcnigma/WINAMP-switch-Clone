@@ -5,7 +5,7 @@ extern "C" {
 #endif
 
 #include "player_state.h"
-
+struct Mp3MetadataEntry;
 void playerInit();
 void playerPlay(int index);
 void playerStop();
@@ -14,7 +14,9 @@ void playerStartCrossfade();
 void playerPrev();
 bool playerIsPlaying();
 void playerUpdate();
-void applyReplayGainFromMetadata();
+//void applyReplayGainFromMetadata();
+void applyReplayGainFromMetadata(const Mp3MetadataEntry& meta);
+//void applyReplayGainFromMetadata(const Mp3MetadataEntry& meta);
 //bool playerIsPlaying();
 bool playerIsPaused();
 

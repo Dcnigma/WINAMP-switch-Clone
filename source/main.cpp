@@ -4,6 +4,7 @@
 #include <SDL_image.h>
 #include "ui.h"
 #include "mp3.h"
+#include "flac.h"
 #include "eq.h"
 #include "filebrowser.h"
 #include "playlist.h"
@@ -64,6 +65,7 @@ int main()
 {
     romfsInit();
     mp3StartBackgroundScanner();
+    flacStartBackgroundScanner();
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
     TTF_Init();
     IMG_Init(IMG_INIT_PNG);
@@ -88,6 +90,7 @@ int main()
     SDL_Texture* texPlaylistKnob = IMG_LoadTexture(renderer, "romfs:/skins/PlaylistKnob.png");
     SDL_Texture* texCbuttons = IMG_LoadTexture(renderer, "romfs:/skins/CBUTTONS.png");
     SDL_Texture* texSHUFREP = IMG_LoadTexture(renderer, "romfs:/skins/SHUFREP.png");
+    SDL_Texture* texEQMAIN = IMG_LoadTexture(renderer, "romfs:/skins/EQMAIN.png");
 
     mp3AddToPlaylist("romfs:/song.mp3");
     playlistScroll = 0;
@@ -122,6 +125,8 @@ int main()
              playlistClear();
              mp3CancelAllScans();
              mp3ClearMetadata();
+             flacCancelAllScans();
+             flacClearMetadata();
              fileBrowserOpen();
          }
          // Play first track with A
@@ -147,11 +152,13 @@ int main()
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
 
-        char songText[256] = " ";
+        char songText[256] = "WinAMP by DcNigma";
         int idx = playerGetCurrentTrackIndex();
         if (idx >= 0)
         {
+            // Try MP3 metadata first; fall back to FLAC metadata for .flac tracks
             const Mp3MetadataEntry* md = mp3GetTrackMetadata(idx);
+            if (!md) md = flacGetTrackMetadata(idx);
             if (md)
                 snprintf(songText, sizeof(songText), "%d. %s - %s",
                          idx + 1,
@@ -161,7 +168,7 @@ int main()
 
         uiRender(renderer, font, fontBig, skin,
                  texProgIndicator, texVolume, texPan,
-                 texPlaylistKnob, texCbuttons, texSHUFREP,
+                 texPlaylistKnob, texCbuttons, texSHUFREP,texEQMAIN,
                  songText);
 
         renderPlaylist(renderer, font);
@@ -171,6 +178,7 @@ int main()
     }
 
     mp3StopBackgroundScanner();
+    flacStopBackgroundScanner();
     playerStop();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

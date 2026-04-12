@@ -837,7 +837,11 @@ bool mp3AddToPlaylist(const char* path)
         return false;
 
     playlistAdd(path);
-    int index = playlistGetCount() - 1;
+
+    // Use the LOCAL index into playlistMetadata, not the global playlist index.
+    // This is critical for mixed MP3+FLAC folders — the global playlist index
+    // includes FLAC entries, but this metadata vector only holds MP3 entries.
+    int localIndex = (int)playlistMetadata.size();
 
     Mp3MetadataEntry meta{};
     strcpy(meta.title, "Scanning...");
@@ -853,7 +857,7 @@ bool mp3AddToPlaylist(const char* path)
     if (it != g_mp3Cache.end() && mp3CacheValid(it->second))
     {
         mutexLock(&g_metaMutex);
-        playlistMetadata[index].meta = it->second.meta;
+        playlistMetadata[localIndex].meta = it->second.meta;
         mutexUnlock(&g_metaMutex);
 
         debugLog("[CACHE] Hit for %s\n", path);
@@ -880,7 +884,7 @@ bool mp3AddToPlaylist(const char* path)
             );
 
         mutexLock(&g_metaMutex);
-        playlistMetadata[index].meta = entry;
+        playlistMetadata[localIndex].meta = entry;
         mutexUnlock(&g_metaMutex);
 
         return true;
@@ -892,7 +896,7 @@ bool mp3AddToPlaylist(const char* path)
     {
         g_scanQueue.push_back({
             path,
-            index,
+            localIndex,
             g_scanGeneration,
             SCAN_FAST
         });
@@ -1008,12 +1012,17 @@ void mp3ReloadAllMetadata()
     }
 }
 
-const Mp3MetadataEntry* mp3GetTrackMetadata(int index)
+const Mp3MetadataEntry* mp3GetTrackMetadata(int globalIndex)
 {
-    if (index < 0) return nullptr;
-    if (index >= (int)playlistMetadata.size()) return nullptr;
-    if (index >= playlistGetCount()) return nullptr;
-    return &playlistMetadata[index].meta;
+    if (globalIndex < 0 || globalIndex >= playlistGetCount()) return nullptr;
+    const char* path = playlistGetTrack(globalIndex);
+    if (!path) return nullptr;
+
+    for (auto& r : playlistMetadata)
+        if (strcmp(r.path, path) == 0)
+            return &r.meta;
+
+    return nullptr;
 }
 
 

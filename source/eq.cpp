@@ -247,7 +247,7 @@ float Equalizer::processSample(float sample, int channel)
 
     // Apply ReplayGain
     // Apply ReplayGain (static)
-    sample *= replayGainLinear;
+    //sample *= replayGainLinear;
 
     // Apply AutoGain (dynamic)
     if (g_settings.autoGainEnabled)

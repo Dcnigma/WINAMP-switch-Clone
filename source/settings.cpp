@@ -10,7 +10,7 @@ PlayerSettings g_settings =
 {
     false,                 // crossfadeEnabled
     3.0f,                  // crossfadeSeconds
-    false,                 // autoGainEnabled 
+    false,                 // autoGainEnabled
     REPLAYGAIN_TRACK       // replayGainMode
 };
 
@@ -34,7 +34,7 @@ void settingsHandleInput(PadState* pad)
 {
     u64 down = padGetButtonsDown(pad);
 
-    if (down & HidNpadButton_B)
+    if (down & HidNpadButton_X)
     {
         settingsClose();
         return;
