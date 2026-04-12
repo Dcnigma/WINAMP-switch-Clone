@@ -524,9 +524,16 @@ static void fb_drawBorder(SDL_Renderer* r,
     }
 }
 
-// Draw text rotated 90° CW inside a column, top-aligned
-// colX = left edge of the column in framebuffer, colW = column width
-// textY = position along the column (framebuffer Y = screen X after rotation)
+// Draw text rotated 90° CW inside a column.
+// colX      = left edge of the column in framebuffer coords
+// colW      = width of the column in framebuffer coords
+// textY     = where the top of the rendered text should appear
+//             in framebuffer Y (= position along the column in screen-space)
+// SDL_RenderCopyEx with angle=90 rotates the texture clockwise around
+// the pivot point. With pivot={0,0} at dst top-left, the top-left of the
+// texture maps to the top-left of dst, and the texture grows downward by
+// its width (after rotation). We compensate by shifting dst so the visible
+// result is centered in the column and starts at textY.
 static void fb_drawText(SDL_Renderer* renderer,
                         TTF_Font* font,
                         const char* text,
@@ -541,64 +548,178 @@ static void fb_drawText(SDL_Renderer* renderer,
     SDL_Texture* t = SDL_CreateTextureFromSurface(renderer, s);
     if (!t) { SDL_FreeSurface(s); return; }
 
-    // After 90° CW rotation: texture w→h in framebuffer, h→w
-    // Place horizontally centered inside the column
-    SDL_Rect dst;
-    dst.h = s->h;   // changed to s->h otherwise it got squased
-    dst.w = s->w;   // changed to s->w otherwise it got squased
-    dst.x = colX + (colW - dst.h);
-    dst.y = textY;
+    int tw = s->w;  // texture width  (unrotated)
+    int th = s->h;  // texture height (unrotated)
+    SDL_FreeSurface(s);
 
-    SDL_Point center = {0, 0};
-    SDL_RenderCopyEx(renderer, t, NULL, &dst, 90.0, &center, SDL_FLIP_NONE);
+    // After 90° CW rotation around dst top-left {0,0}:
+    //   The texture's right edge moves to the bottom.
+    //   The rendered region occupies:
+    //     horizontal: [dst.x .. dst.x + th]   (th becomes the horizontal extent)
+    //     vertical:   [dst.y .. dst.y + tw]    (tw becomes the vertical extent)
+    //
+    // We want:
+    //   horizontal center of text = colX + colW/2
+    //   top of rendered text      = textY
+    //
+    // So:
+    //   dst.x + th/2 = colX + colW/2  →  dst.x = colX + (colW - th) / 2
+    //   dst.y        = textY
+
+    SDL_Rect dst;
+    dst.x = colX + (colW - th) / 2;
+    dst.y = textY;
+    dst.w = tw;
+    dst.h = th;
+
+    SDL_Point pivot = {0, 0};
+    SDL_RenderCopyEx(renderer, t, NULL, &dst, 90.0, &pivot, SDL_FLIP_NONE);
 
     SDL_DestroyTexture(t);
-    SDL_FreeSurface(s);
 }
 
-// Draw a folder icon (simple rectangle approximation matching the gold look)
+// Draw a folder icon that appears upright on the rotated screen.
+// In framebuffer coords, "up" on screen = left in framebuffer.
+// So we draw the icon as if X is vertical and Y is horizontal.
+// colX/colW define the column, iconY is the framebuffer-Y start (= screen left).
 static void fb_drawFolderIcon(SDL_Renderer* renderer,
                                int colX, int colW,
                                int iconY)
 {
-    // Tab (top of folder)
-    fb_fillRect(renderer,
-                colX + colW/2 - 18, iconY,
-                36, 12,
-                {200, 150, 30, 255});
+    // Centre the icon horizontally within the column
+    int cx = colX + colW / 2;
+
+    // In framebuffer space (before rotation perception):
+    // The folder needs to look upright after 90° CW rotation.
+    // We draw it rotated 90° CCW so it appears correct on screen.
+    // Simplest approach: render as an SDL_Texture via surface then RenderCopyEx.
+
+    // Build a small software surface for the icon (56x52 pixels)
+    const int IW = 56;
+    const int IH = 52;
+    SDL_Surface* surf = SDL_CreateRGBSurface(0, IW, IH, 32,
+        0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
+    if (!surf) return;
+
+    SDL_FillRect(surf, NULL, SDL_MapRGBA(surf->format, 0, 0, 0, 0));
+
+    // Tab (top-left of folder body in icon space)
+    SDL_Rect tab  = {0, 0, 30, 10};
+    SDL_FillRect(surf, &tab,
+                 SDL_MapRGB(surf->format, 200, 150, 30));
+
     // Body
-    fb_fillRect(renderer,
-                colX + colW/2 - 28, iconY + 10,
-                56, 40,
-                {220, 170, 50, 255});
+    SDL_Rect body = {0, 8, IW, IH - 8};
+    SDL_FillRect(surf, &body,
+                 SDL_MapRGB(surf->format, 220, 170, 50));
+
     // Shine
-    fb_fillRect(renderer,
-                colX + colW/2 - 22, iconY + 14,
-                20, 8,
-                {255, 220, 120, 180});
+    SDL_Rect shine = {6, 13, 22, 8};
+    SDL_FillRect(surf, &shine,
+                 SDL_MapRGBA(surf->format, 255, 220, 120, 180));
+
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
+    SDL_FreeSurface(surf);
+    if (!tex) return;
+
+    // Place icon centered in column, at iconY along the column.
+    // After 90° CW rotation around pivot {0,0}:
+    //   horizontal extent = IH, vertical extent = IW
+    // Center horizontally: dst.x = cx - IH/2
+    // Top of rendered icon at iconY: dst.y = iconY
+    SDL_Rect dst = { cx - IH / 2, iconY, IW, IH };
+    SDL_Point pivot = {0, 0};
+    SDL_RenderCopyEx(renderer, tex, NULL, &dst, 90.0, &pivot, SDL_FLIP_NONE);
+
+    SDL_DestroyTexture(tex);
 }
 
-// Draw a + or ✓ button at the bottom of a column
+// Draw a checkmark using line primitives, oriented correctly for 90° CW rotated screen.
+// cx, cy are framebuffer coordinates (center of the button box).
+// The lines are drawn in framebuffer space such that after 90° CW screen rotation
+// the checkmark appears upright: short stroke down-left, long stroke up-right.
+static void fb_drawCheckmark(SDL_Renderer* renderer,
+                              int cx, int cy, int size, SDL_Color col)
+{
+    SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);
+    int s = size / 2;
+    // On the rotated screen, framebuffer-X maps to screen-Y (vertical) and
+    // framebuffer-Y maps to screen-X (horizontal).
+    // To draw a checkmark that looks correct after CW rotation, we draw it
+    // as if rotated 90° CCW in framebuffer space:
+    //   Short left stroke:  goes right+up in framebuffer → down-left on screen
+    //   Long right stroke:  goes right+down in framebuffer → up-right on screen (the long tick)
+    for (int t = -1; t <= 1; t++)
+    {
+        // Short stroke: from left to middle-low (in screen space: bottom-left of tick)
+        SDL_RenderDrawLine(renderer,
+                           cx - s,         cy + t,
+                           cx - s/4,       cy + s/2 + t);
+        // Long stroke: from middle-low to right-high (the long upward tick)
+        SDL_RenderDrawLine(renderer,
+                           cx - s/4,       cy + s/2 + t,
+                           cx + s,         cy - s + t);
+    }
+}
+
+// Draw a + using line primitives, thick and centered.
+static void fb_drawPlus(SDL_Renderer* renderer,
+                         int cx, int cy, int size, SDL_Color col)
+{
+    SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, col.a);
+    int h = size / 2;
+    for (int t = -2; t <= 2; t++)
+    {
+        SDL_RenderDrawLine(renderer, cx - h, cy + t, cx + h, cy + t); // horizontal
+        SDL_RenderDrawLine(renderer, cx + t, cy - h, cx + t, cy + h); // vertical
+    }
+}
+
+// Draw the +/✓ button square at the bottom of a column.
+// Scroll arrows (< >) are drawn outside the box, below it.
 static void fb_drawAddButton(SDL_Renderer* renderer,
                               TTF_Font* font,
                               int colX, int colW,
-                              bool added, bool selected)
+                              bool added, bool selected,
+                              bool showLeft, bool showRight)
 {
-    int btnY = SCREEN_H - BTN_SIZE - 4;
-    int btnX = colX + (colW - BTN_SIZE) / 2;
+    const int BOX = 80;
+    int btnY = SCREEN_H - BOX - 8;
+    int btnX = colX + (colW - BOX) / 2;
 
-    SDL_Color bgColor = added ? COL_BTN_ADDED : COL_BTN_NORMAL;
-    if (selected) bgColor = {0, 60, 0, 220};
+    SDL_Color bgColor = added    ? COL_BTN_ADDED
+                      : selected ? SDL_Color{0, 60, 0, 220}
+                      :            COL_BTN_NORMAL;
+    fb_fillRect(renderer, btnX, btnY, BOX, BOX, bgColor);
+    fb_drawBorder(renderer, btnX, btnY, BOX, BOX, COL_BORDER, 2);
 
-    fb_fillRect(renderer, btnX, btnY, BTN_SIZE, BTN_SIZE, bgColor);
-    fb_drawBorder(renderer, btnX, btnY, BTN_SIZE, BTN_SIZE, COL_BORDER, 2);
-
-    const char* sym = added ? "V" : "+"; // ✓ or +
+    // Symbol centered in the box
+    int cx = btnX + BOX / 2;
+    int cy = btnY + BOX / 2;
     SDL_Color symColor = added ? COL_TEXT_ADDED : COL_TEXT_SEL;
-    fb_drawText(renderer, font, sym,
-                btnX, BTN_SIZE,
-                btnY + (BTN_SIZE - 8) / 2 - 4,
-                symColor);
+
+    if (added)
+        fb_drawCheckmark(renderer, cx, cy, 28, symColor);
+    else
+        fb_drawPlus(renderer, cx, cy, 28, symColor);
+
+    // Scroll arrows drawn ABOVE the button box in screen space.
+    // "Above" on screen = lower framebuffer Y = smaller btnY value.
+    // Place them just above the box, centered in the column.
+    if (showLeft)
+    {
+        fb_drawText(renderer, font, "<",
+                    colX, colW,
+                    btnY - 36,
+                    COL_TEXT_SEL);
+    }
+    if (showRight)
+    {
+        fb_drawText(renderer, font, ">",
+                    colX, colW,
+                    btnY - 36,
+                    COL_TEXT_SEL);
+    }
 }
 
 /* ============================================================
@@ -616,50 +737,55 @@ void fileBrowserRender(SDL_Renderer* renderer, TTF_Font* font)
     ==================================================== */
     if (g_screen == FB_SCREEN_MENU)
     {
-        // 4 buttons: Cancel, Add URL, Add File, Add to Playlist
-        // Evenly spaced across the screen width
         struct { const char* label; } menuItems[4] = {
             {"Cancel"},
             {"Add URL"},
             {"Add File"},
             {"Add to Playlist"}
         };
-
-        int numItems  = 4;
-        int btnW      = (SCREEN_W - 95) / numItems;
-        int btnH      = SCREEN_H - 80;
-        int btnY      = 40;
+        const int numItems = 4;
+        const int MARGIN   = 60;   // gap from screen edges
+        const int GAP      = 12;   // gap between buttons
+        const int BTN_Y    = MARGIN;
+        const int BTN_H    = SCREEN_H - MARGIN * 2;
+        const int totalW   = SCREEN_W - MARGIN * 2;
+        const int btnW     = (totalW - GAP * (numItems - 1)) / numItems;
 
         for (int i = 0; i < numItems; i++)
         {
-            int btnX = 20 + i * (btnW + 8);
-
+            int btnX = MARGIN + i * (btnW + GAP);
             bool sel = (i == g_menuSel);
 
-            // Background: selected = dark green, others = near-black
             SDL_Color bg = sel
                 ? SDL_Color{0, 100, 0, 255}
                 : SDL_Color{10, 25, 10, 220};
-            fb_fillRect(renderer, btnX, btnY, btnW, btnH, bg);
+            fb_fillRect(renderer, btnX, BTN_Y, btnW, BTN_H, bg);
 
-            // Border: bright green on selected
             SDL_Color border = sel ? COL_BORDER : SDL_Color{0, 80, 0, 200};
-            fb_drawBorder(renderer, btnX, btnY, btnW, btnH, border, 3);
+            fb_drawBorder(renderer, btnX, BTN_Y, btnW, BTN_H, border, 3);
 
-            // Label centered in button
+            // Center label near the top of each button column
             SDL_Color textColor = sel ? COL_TEXT_SEL : COL_TEXT_NORMAL;
             fb_drawText(renderer, font, menuItems[i].label,
                         btnX, btnW,
-                        btnY + 60,
+                        BTN_Y + 30,
                         textColor);
         }
 
-        // Small instruction hint
-        fb_drawText(renderer, font,
-                    "A: Select   B: Cancel",
-                    SCREEN_W + 15, 0,
-                    SCREEN_H - 1000,
-                    COL_TEXT_NORMAL);
+        // Instruction hint — tight strip on the right edge of framebuffer
+        // (= bottom of rotated screen, below the buttons)
+        {
+            const int HDR_W = 160;
+            int hdrX = SCREEN_W - HDR_W - 6;
+            fb_fillRect(renderer, hdrX, MARGIN, HDR_W, BTN_H,
+                        SDL_Color{5, 30, 5, 220});
+            fb_drawBorder(renderer, hdrX, MARGIN, HDR_W, BTN_H,
+                          COL_BORDER, 2);
+            fb_drawText(renderer, font, "A: Select   B: Cancel",
+                        hdrX, HDR_W,
+                        MARGIN + 20,
+                        COL_TEXT_NORMAL);
+        }
         return;
     }
 
@@ -670,101 +796,140 @@ void fileBrowserRender(SDL_Renderer* renderer, TTF_Font* font)
     {
         int itemCount = (int)g_items.size();
 
-        /* ---- Sidebar ---- */
-        fb_fillRect(renderer,
-                    SIDEBAR_X, 0, SIDEBAR_W, SIDEBAR_H,
-                    COL_SIDEBAR_BG);
-        fb_drawBorder(renderer,
-                      SIDEBAR_X, 0, SIDEBAR_W, SIDEBAR_H,
-                      COL_BORDER, 2);
+        // ---- Layout constants for this screen ----
+        // The sidebar sits at SIDEBAR_X and is SIDEBAR_W wide.
+        // We split it into three zones (framebuffer Y axis = screen X axis):
+        //   [0 .. CANCEL_H)            : Cancel button
+        //   [CANCEL_H .. CANCEL_H+DONE_H) : Done button
+        //   [CANCEL_H+DONE_H .. SCREEN_H) : Instruction strip
+        const int CANCEL_H = 360;   // height of Cancel box in framebuffer
+        const int DONE_H   = 360;   // height of Done box in framebuffer
+        const int PAD      = 6;     // padding between boxes
 
-        // "// SELECT FILES" header
-        fb_drawText(renderer, font, "// SELECT FILES",
-                    SIDEBAR_X, 1150, SIDEBAR_W,
-                    COL_TEXT_SEL);
+        // ---- "// SELECT FILES" header ----
+        // Drawn right-aligned in screen space = at high framebuffer X.
+        // We put it in a narrow strip on the RIGHT edge of the framebuffer
+        // (= bottom of screen after rotation), tight border around just the text.
+        {
+            const int HDR_W   = 180;
+            const int HDR_H   = SCREEN_H - 20;
+            int hdrX = SCREEN_W - HDR_W - 6;
 
-        // Cancel button (upper half of sidebar)
+            fb_fillRect(renderer, hdrX, 10, HDR_W, HDR_H,
+                        SDL_Color{5, 30, 5, 220});
+            fb_drawBorder(renderer, hdrX, 10, HDR_W, HDR_H,
+                          COL_BORDER, 2);
+
+            fb_drawText(renderer, font, "// SELECT FILES",
+                        hdrX, HDR_W,
+                        20,
+                        COL_TEXT_SEL);
+        }
+
+        // ---- Sidebar background (no outer border — boxes have their own) ----
+        fb_fillRect(renderer, SIDEBAR_X, 0, SIDEBAR_W, SCREEN_H, COL_SIDEBAR_BG);
+
+        // ---- Cancel box ----
         {
             bool sel = g_inSidebar && g_sidebarSel == 0;
             SDL_Color bg = sel ? COL_ITEM_SEL_BG : COL_ITEM_BG;
-            int CancelY    = SCREEN_H / 2 - 605;
-            int Cancelh    = SCREEN_H / 2 - 15;
-            fb_fillRect(renderer,
-                        SIDEBAR_X + 4, 10,
-                        SIDEBAR_W - 8, SCREEN_H / 2 - 15,
-                        bg);
-            fb_drawBorder(renderer,
-                          SIDEBAR_X + 4, 10,
-                          SIDEBAR_W - 8, SCREEN_H / 2 - 15,
+            int boxY = PAD;
+            int boxH = CANCEL_H - PAD * 2;
+            fb_fillRect(renderer,  SIDEBAR_X + PAD, boxY, SIDEBAR_W - PAD*2, boxH, bg);
+            fb_drawBorder(renderer, SIDEBAR_X + PAD, boxY, SIDEBAR_W - PAD*2, boxH,
                           COL_BORDER, sel ? 3 : 1);
+            // Center text: textY = boxY + (boxH - fontHeight) / 2
+            // fb_drawText with textY positions the start of the rendered (rotated) text.
+            // After rotation, the text width becomes the vertical extent.
+            // Approximate center: boxY + boxH/2 - estimatedTextWidth/2.
+            // For a ~32px font "Cancel" ≈ 6 chars × 18px = ~108px wide.
+            // Center: boxY + (boxH - 108) / 2
+            int textCenter = boxY + (boxH - 110) / 2;
             fb_drawText(renderer, font, "Cancel",
-                        SIDEBAR_X + 4, SIDEBAR_W - 8,
-                        CancelY + Cancelh / 2,
+                        SIDEBAR_X + PAD, SIDEBAR_W - PAD*2,
+                        textCenter,
                         sel ? COL_TEXT_SEL : COL_TEXT_NORMAL);
         }
 
-        // Done button (lower half of sidebar)
+        // ---- Done box ----
         {
             bool sel = g_inSidebar && g_sidebarSel == 1;
             SDL_Color bg = sel ? COL_ITEM_SEL_BG : COL_ITEM_BG;
-            int doneY    = SCREEN_H / 2 + 5;
-            int doneH    = SCREEN_H / 2 - 15;
-            fb_fillRect(renderer,
-                        SIDEBAR_X + 4, doneY,
-                        SIDEBAR_W - 8, doneH,
-                        bg);
-            fb_drawBorder(renderer,
-                          SIDEBAR_X + 4, doneY,
-                          SIDEBAR_W - 8, doneH,
+            int boxY = CANCEL_H + PAD;
+            int boxH = DONE_H - PAD * 2;
+            fb_fillRect(renderer,  SIDEBAR_X + PAD, boxY, SIDEBAR_W - PAD*2, boxH, bg);
+            fb_drawBorder(renderer, SIDEBAR_X + PAD, boxY, SIDEBAR_W - PAD*2, boxH,
                           COL_BORDER, sel ? 3 : 1);
+            // "Done" ≈ 4 chars × 18px = ~72px. Center: boxY + (boxH - 72) / 2
+            int textCenter = boxY + (boxH - 75) / 2;
             fb_drawText(renderer, font, "Done",
-                        SIDEBAR_X + 4, SIDEBAR_W - 8,
-                        doneY + doneH / 2,
+                        SIDEBAR_X + PAD, SIDEBAR_W - PAD*2,
+                        textCenter,
                         sel ? COL_TEXT_SEL : SDL_Color{0, 180, 0, 200});
+        }
+
+        // ---- Instruction strip (below Done, to bottom of sidebar) ----
+        {
+            int stripY = CANCEL_H + DONE_H + PAD;
+            int stripH = SCREEN_H - stripY - PAD;
+            fb_fillRect(renderer,  SIDEBAR_X + PAD, stripY, SIDEBAR_W - PAD*2, stripH,
+                        SDL_Color{8, 25, 8, 200});
+            fb_drawBorder(renderer, SIDEBAR_X + PAD, stripY, SIDEBAR_W - PAD*2, stripH,
+                          SDL_Color{0, 100, 0, 180}, 1);
+            fb_drawText(renderer, font,
+                        "A:Enter  B:Folder  X:Menu  Left:Sidebar",
+                        SIDEBAR_X + PAD, SIDEBAR_W - PAD*2,
+                        stripY + 10,
+                        COL_TEXT_NORMAL);
         }
 
         /* ---- Item columns ---- */
         int visible = std::min(VISIBLE_COLS, itemCount - g_scroll);
 
+        // Columns occupy from ITEMS_START_X to SCREEN_W - HDR_W - 6 - some margin
+        const int HDR_STRIP_W = 192; // matches hdrX calc above
+        int itemsEndX  = SCREEN_W - HDR_STRIP_W - 10;
+        int effectiveItemW = (itemsEndX - ITEMS_START_X) / VISIBLE_COLS;
+        if (effectiveItemW < 1) effectiveItemW = ITEM_W;
+
         for (int vi = 0; vi < visible; vi++)
         {
-            int idx   = g_scroll + vi;
+            int idx    = g_scroll + vi;
             FBItem& it = g_items[idx];
             bool isSel = (!g_inSidebar && idx == g_selected);
 
-            int colX = ITEMS_START_X + vi * ITEM_W;
+            int colX = ITEMS_START_X + vi * effectiveItemW;
+            int colW = effectiveItemW;
 
             // Column background
             SDL_Color bg = isSel ? COL_ITEM_SEL_BG : COL_ITEM_BG;
-            fb_fillRect(renderer, colX, 0, ITEM_W, SCREEN_H, bg);
+            fb_fillRect(renderer, colX, 0, colW, SCREEN_H, bg);
 
             // Column border
             SDL_Color border = isSel ? COL_BORDER : SDL_Color{0, 60, 0, 180};
-            fb_drawBorder(renderer, colX, 0, ITEM_W, SCREEN_H, border,
+            fb_drawBorder(renderer, colX, 0, colW, SCREEN_H, border,
                           isSel ? 3 : 1);
 
-            // Icon area (top of column in rotated view = left in framebuffer)
+            // Icon area
             if (it.isDir)
             {
-                fb_drawFolderIcon(renderer, colX, ITEM_W, 20);
+                fb_drawFolderIcon(renderer, colX, colW, 14);
             }
             else
             {
-                // Small colored bar indicating format
                 SDL_Color fmtColor = {100, 100, 100, 200};
-                if (isMp3(it.name))  fmtColor = {80, 160, 80,  220};
-                if (isFlac(it.name)) fmtColor = {60, 120, 200, 220};
-                if (isOgg(it.name))  fmtColor = {160, 80, 160, 220};
-                if (isWav(it.name))  fmtColor = {160, 140, 60, 220};
-                fb_fillRect(renderer, colX + 10, 10, ITEM_W - 20, 20, fmtColor);
+                if (isMp3(it.name))  fmtColor = { 80, 160,  80, 220};
+                if (isFlac(it.name)) fmtColor = { 60, 120, 200, 220};
+                if (isOgg(it.name))  fmtColor = {160,  80, 160, 220};
+                if (isWav(it.name))  fmtColor = {160, 140,  60, 220};
+                fb_fillRect(renderer, colX + 6, 6, colW - 12, 16, fmtColor);
             }
 
-            // Name label — starts just below the icon
-            SDL_Color textColor = isSel ? COL_TEXT_SEL
+            // Name label
+            SDL_Color textColor = isSel    ? COL_TEXT_SEL
                                 : it.isDir ? COL_FOLDER
-                                : COL_TEXT_NORMAL;
+                                :            COL_TEXT_NORMAL;
 
-            // Build display name: "name [EXT]" for audio files
             char displayName[300];
             if (!it.isDir && isAudioFile(it.name))
                 snprintf(displayName, sizeof(displayName),
@@ -773,40 +938,18 @@ void fileBrowserRender(SDL_Renderer* renderer, TTF_Font* font)
                 snprintf(displayName, sizeof(displayName), "%s", it.name);
 
             fb_drawText(renderer, font, displayName,
-                        colX, ITEM_W,
+                        colX, colW,
                         ICON_ZONE_H,
                         textColor);
 
-            // Add / check button at bottom
-            fb_drawAddButton(renderer, font, colX, ITEM_W,
-                             it.added, isSel);
-        }
+            // Scroll arrows outside the + box
+            bool arrowLeft  = (vi == 0)            && (g_scroll > 0);
+            bool arrowRight = (vi == visible - 1)  && (g_scroll + VISIBLE_COLS < itemCount);
 
-        /* ---- Scroll indicators ---- */
-        if (g_scroll > 0)
-        {
-            // Left arrow hint on leftmost visible column
-            fb_drawText(renderer, font, "<",
-                        ITEMS_START_X, ITEM_W,
-                        SCREEN_H - 50,
-                        COL_TEXT_SEL);
+            fb_drawAddButton(renderer, font, colX, colW,
+                             it.added, isSel,
+                             arrowLeft, arrowRight);
         }
-        if (g_scroll + VISIBLE_COLS < itemCount)
-        {
-            // Right arrow hint on rightmost visible column
-            int lastColX = ITEMS_START_X + (VISIBLE_COLS - 1) * ITEM_W;
-            fb_drawText(renderer, font, ">",
-                        lastColX, ITEM_W,
-                        SCREEN_H - 50,
-                        COL_TEXT_SEL);
-        }
-
-        /* ---- Instruction bar at very bottom ---- */
-        fb_drawText(renderer, font,
-                    "A:Enter/Select  B:Add Folder  X:Back to Menu  \xe2\x86\x90:Sidebar",
-                    ITEMS_START_X, SCREEN_W - ITEMS_START_X,
-                    SCREEN_H - 1000,
-                    COL_TEXT_NORMAL);
 
         return;
     }

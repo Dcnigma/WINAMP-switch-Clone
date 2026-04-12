@@ -66,16 +66,8 @@ void settingsHandleInput(PadState* pad)
                 // Optional: reset to default
                 g_settings.crossfadeSeconds = 3.0f;
                 break;
-            case SETTING_REPLAYGAIN:
-                // cycle OFF → TRACK → ALBUM
-                g_settings.replayGainMode =
-                    (ReplayGainMode)((g_settings.replayGainMode + 1) % 3);
-                break;
             case SETTING_AUTOGAIN:
                 g_settings.autoGainEnabled = !g_settings.autoGainEnabled;
-                break;
-            case SETTING_REPLAYGAIN_PREAMP:
-                // handled with left/right
                 break;
             case SETTING_BACK:
                 settingsClose();
@@ -101,21 +93,6 @@ void settingsHandleInput(PadState* pad)
             if (g_settings.crossfadeSeconds > 10.0f)
                 g_settings.crossfadeSeconds = 10.0f;
         }
-        if (g_selectedItem == SETTING_REPLAYGAIN_PREAMP)
-        {
-            float step = 0.5f;
-
-            float val = g_equalizer.getReplayGainPreamp();
-
-            if (down & HidNpadButton_Left)
-                val -= step;
-            else
-                val += step;
-
-            val = std::clamp(val, -12.0f, 12.0f);
-
-            g_equalizer.setReplayGainPreamp(val);
-        }
     }
 }
 
@@ -138,9 +115,7 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
         "Crossfade",
         "Crossfade Time",
         "ReplayGain",
-        "ReplayGain Preamp",
         "Auto Gain",
-        "Auto EQ",
         "Back"
     };
 
@@ -186,24 +161,7 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
             SDL_Rect fill = { barX, barY, (int)(barW * t), barH };
             SDL_RenderFillRect(renderer, &fill);
         }
-        else if (i == SETTING_REPLAYGAIN_PREAMP)
-        {
-            int barX = 950;
-            int barY = y + 40;
-            int barW = 250;
-            int barH = 10;
 
-            SDL_SetRenderDrawColor(renderer, 80,80,80,255);
-            SDL_Rect bg = { barX, barY, barW, barH };
-            SDL_RenderFillRect(renderer, &bg);
-
-            float val = g_equalizer.getReplayGainPreamp();
-            float t = (val + 12.0f) / 24.0f;
-
-            SDL_SetRenderDrawColor(renderer, 0,200,255,255);
-            SDL_Rect fill = { barX, barY, (int)(barW * t), barH };
-            SDL_RenderFillRect(renderer, &fill);
-        }
 
         SDL_RenderCopy(renderer, tex, NULL, &dst);
 
@@ -230,11 +188,6 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
 
             sprintf(valueText, "%s", modeStr);
         }
-        else if (i == SETTING_REPLAYGAIN_PREAMP)
-          {
-              sprintf(valueText, "%.1f dB",
-                  g_equalizer.getReplayGainPreamp());
-          }
         else if (i == SETTING_CROSSFADE_TIME)
         {
             sprintf(valueText, "%.1fs",
