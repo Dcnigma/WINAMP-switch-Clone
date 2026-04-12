@@ -4,6 +4,8 @@
 #include <string>
 #include "mp3.h"
 #include "flac.h"
+#include "ogg.h"
+#include "wav.h"
 #include <stdio.h>
 #include "filebrowser.h"
 #include "player.h"
@@ -130,6 +132,8 @@ void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font)
 
         const Mp3MetadataEntry* md = mp3GetTrackMetadata(idx);
         if (!md) md = flacGetTrackMetadata(idx);
+        if (!md) md = oggGetTrackMetadata(idx);
+        if (!md) md = wavGetTrackMetadata(idx);
         // If still null, render a fallback line using the filename
 
 

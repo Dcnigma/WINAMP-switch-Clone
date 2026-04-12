@@ -5,6 +5,8 @@
 #include "ui.h"
 #include "mp3.h"
 #include "flac.h"
+#include "ogg.h"
+#include "wav.h"
 #include "eq.h"
 #include "filebrowser.h"
 #include "playlist.h"
@@ -66,6 +68,8 @@ int main()
     romfsInit();
     mp3StartBackgroundScanner();
     flacStartBackgroundScanner();
+    oggStartBackgroundScanner();
+    wavStartBackgroundScanner();
     SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
     TTF_Init();
     IMG_Init(IMG_INIT_PNG);
@@ -127,6 +131,10 @@ int main()
              mp3ClearMetadata();
              flacCancelAllScans();
              flacClearMetadata();
+             oggCancelAllScans();
+             oggClearMetadata();
+             wavCancelAllScans();
+             wavClearMetadata();
              fileBrowserOpen();
          }
          // Play first track with A
@@ -152,13 +160,15 @@ int main()
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
 
-        char songText[256] = "WinAMP by DcNigma";
+        char songText[256] = "WINamp By DcNigma";
         int idx = playerGetCurrentTrackIndex();
         if (idx >= 0)
         {
-            // Try MP3 metadata first; fall back to FLAC metadata for .flac tracks
+            // Try each format's metadata store in turn
             const Mp3MetadataEntry* md = mp3GetTrackMetadata(idx);
             if (!md) md = flacGetTrackMetadata(idx);
+            if (!md) md = oggGetTrackMetadata(idx);
+            if (!md) md = wavGetTrackMetadata(idx);
             if (md)
                 snprintf(songText, sizeof(songText), "%d. %s - %s",
                          idx + 1,
@@ -179,6 +189,8 @@ int main()
 
     mp3StopBackgroundScanner();
     flacStopBackgroundScanner();
+    oggStopBackgroundScanner();
+    wavStopBackgroundScanner();
     playerStop();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

@@ -1,5 +1,8 @@
 #include "ui.h"
 #include "mp3.h"
+#include "flac.h"
+#include "ogg.h"
+#include "wav.h"
 #include "eq.h"
 #include "player.h"
 #include "playlist.h"
@@ -20,11 +23,22 @@
 #define FFT_SIZE 1024
 #define SPECTRUM_BARS 20
 
-
 #define EQ_BAR_WIDTH   244
 #define EQ_BAR_HEIGHT  21
 #define EQ_KNOB_W      37
 #define EQ_KNOB_H      37
+
+// Helper: try all four format metadata stores in order.
+// Use this everywhere instead of bare mp3GetTrackMetadata() so that
+// FLAC, OGG, and WAV tracks show correct info throughout the UI.
+static const Mp3MetadataEntry* getAnyTrackMetadata(int index)
+{
+    const Mp3MetadataEntry* md = mp3GetTrackMetadata(index);
+    if (!md) md = flacGetTrackMetadata(index);
+    if (!md) md = oggGetTrackMetadata(index);
+    if (!md) md = wavGetTrackMetadata(index);
+    return md;
+}
 
 bool autoEQEnabled = false;
 
@@ -1235,7 +1249,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     SDL_Rect monoRect   = {1670, 835, 30, 90};
     SDL_Rect stereoRect = {1670, 940, 30, 90};
 
-    const Mp3MetadataEntry* md = mp3GetTrackMetadata(playerGetCurrentTrackIndex());
+    const Mp3MetadataEntry* md = getAnyTrackMetadata(playerGetCurrentTrackIndex());
     drawMonoStereo(renderer, font, md, monoRect, stereoRect);
 
     renderEQCurve(renderer);
@@ -1402,11 +1416,9 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
                       ALIGN_CENTER);
 
 int currentTrackIndex = playerGetCurrentTrackIndex();
-//int currentTrackIndex = playlistGetCurrentIndex();
-//int currentTrackIndex = playlistSetCurrentIndex(nextIndex);
 if (currentTrackIndex >= 0)
 {
-    const Mp3MetadataEntry* md = mp3GetTrackMetadata(currentTrackIndex);
+    const Mp3MetadataEntry* md = getAnyTrackMetadata(currentTrackIndex);
         if (md)
         {
             char kbpsText[8];
@@ -1445,19 +1457,19 @@ if (currentTrackIndex >= 0)
      int currentTrack = playerGetCurrentTrackIndex();
      for (int i = 0; i < currentTrack; i++)
      {
-         const Mp3MetadataEntry* md = mp3GetTrackMetadata(i);
+         const Mp3MetadataEntry* md = getAnyTrackMetadata(i);
          if (md) playlistElapsed += md->durationSeconds;
      }
 
      // Add current track elapsed
      playlistElapsed += playerGetElapsedSeconds();
 
-     // --- Compute total playlist duration ---
+     // --- Compute total playlist duration (all formats) ---
      int playlistTotal = 0;
-     int trackCount = mp3GetPlaylistCount();
+     int trackCount = playlistGetCount();
      for (int i = 0; i < trackCount; i++)
      {
-         const Mp3MetadataEntry* md = mp3GetTrackMetadata(i);
+         const Mp3MetadataEntry* md = getAnyTrackMetadata(i);
          if (md) playlistTotal += md->durationSeconds;
      }
 

@@ -3,6 +3,8 @@
 #include "playlist.h"
 #include "mp3.h"
 #include "flac.h"
+#include "ogg.h"
+#include "wav.h"
 #include "eq.h"
 #include "audio_engine.h"
 #include "ui.h"
@@ -27,13 +29,16 @@
 /* ---------------------------------------------------- */
 /* AUDIO FORMAT                                         */
 /* ---------------------------------------------------- */
-enum AudioFormat { FORMAT_MP3, FORMAT_FLAC };
+enum AudioFormat { FORMAT_MP3, FORMAT_FLAC, FORMAT_OGG, FORMAT_WAV };
 
 static AudioFormat trackFormat(const char* path)
 {
     if (!path) return FORMAT_MP3;
     const char* ext = strrchr(path, '.');
-    if (ext && strcasecmp(ext, ".flac") == 0) return FORMAT_FLAC;
+    if (!ext) return FORMAT_MP3;
+    if (strcasecmp(ext, ".flac") == 0) return FORMAT_FLAC;
+    if (strcasecmp(ext, ".ogg")  == 0) return FORMAT_OGG;
+    if (strcasecmp(ext, ".wav")  == 0) return FORMAT_WAV;
     return FORMAT_MP3;
 }
 /* ---------------------------------------------------- */
@@ -42,13 +47,17 @@ static AudioFormat trackFormat(const char* path)
 static AudioEngine audio;
 
 // Current track decoder
-static mpg123_handle* mh      = nullptr;  // active when format == FORMAT_MP3
-static FlacDecoder*   mh_flac = nullptr;  // active when format == FORMAT_FLAC
+static mpg123_handle* mh      = nullptr;  // FORMAT_MP3
+static FlacDecoder*   mh_flac = nullptr;  // FORMAT_FLAC
+static OggDecoder*    mh_ogg  = nullptr;  // FORMAT_OGG
+static WavDecoder*    mh_wav  = nullptr;  // FORMAT_WAV
 static AudioFormat    g_format = FORMAT_MP3;
 
 // Next track decoder (crossfade / gapless preload)
 static mpg123_handle* mh_next      = nullptr;
 static FlacDecoder*   mh_flac_next = nullptr;
+static OggDecoder*    mh_ogg_next  = nullptr;
+static WavDecoder*    mh_wav_next  = nullptr;
 static AudioFormat    g_formatNext  = FORMAT_MP3;
 
 static std::vector<int> g_playQueue;
@@ -94,137 +103,140 @@ static float g_rightMix = 1.0f;
 /* FORMAT-AWARE DECODER HELPERS                         */
 /* ---------------------------------------------------- */
 
-// Read from whichever decoder is active for the current track.
-// Returns same semantics as mpg123_read: MPG123_OK / MPG123_DONE / error.
 static int decoderRead(unsigned char* buf, size_t bufBytes, size_t* done)
 {
     *done = 0;
-    if (g_format == FORMAT_FLAC)
+    switch (g_format)
     {
-        if (!mh_flac) return -1;
-        FlacReadResult r = flacRead(mh_flac, buf, bufBytes, done);
-        if (r == FLAC_READ_DONE) return MPG123_DONE;
-        if (r == FLAC_READ_ERR)  return -1;
-        return MPG123_OK;
-    }
-    else
-    {
-        if (!mh) return -1;
-        return mpg123_read(mh, buf, bufBytes, done);
+        case FORMAT_FLAC:
+            if (!mh_flac) return -1;
+            { FlacReadResult r = flacRead(mh_flac, buf, bufBytes, done);
+              if (r == FLAC_READ_DONE) return MPG123_DONE;
+              if (r == FLAC_READ_ERR)  return -1;
+              return MPG123_OK; }
+        case FORMAT_OGG:
+            if (!mh_ogg) return -1;
+            { OggReadResult r = oggRead(mh_ogg, buf, bufBytes, done);
+              if (r == OGG_READ_DONE) return MPG123_DONE;
+              if (r == OGG_READ_ERR)  return -1;
+              return MPG123_OK; }
+        case FORMAT_WAV:
+            if (!mh_wav) return -1;
+            { WavReadResult r = wavRead(mh_wav, buf, bufBytes, done);
+              if (r == WAV_READ_DONE) return MPG123_DONE;
+              if (r == WAV_READ_ERR)  return -1;
+              return MPG123_OK; }
+        default:
+            if (!mh) return -1;
+            return mpg123_read(mh, buf, bufBytes, done);
     }
 }
 
-// Read from the next-track decoder (crossfade / gapless).
 static int decoderReadNext(unsigned char* buf, size_t bufBytes, size_t* done)
 {
     *done = 0;
-    if (g_formatNext == FORMAT_FLAC)
+    switch (g_formatNext)
     {
-        if (!mh_flac_next) return -1;
-        FlacReadResult r = flacRead(mh_flac_next, buf, bufBytes, done);
-        if (r == FLAC_READ_DONE) return MPG123_DONE;
-        if (r == FLAC_READ_ERR)  return -1;
-        return MPG123_OK;
-    }
-    else
-    {
-        if (!mh_next) return -1;
-        return mpg123_read(mh_next, buf, bufBytes, done);
+        case FORMAT_FLAC:
+            if (!mh_flac_next) return -1;
+            { FlacReadResult r = flacRead(mh_flac_next, buf, bufBytes, done);
+              if (r == FLAC_READ_DONE) return MPG123_DONE;
+              if (r == FLAC_READ_ERR)  return -1;
+              return MPG123_OK; }
+        case FORMAT_OGG:
+            if (!mh_ogg_next) return -1;
+            { OggReadResult r = oggRead(mh_ogg_next, buf, bufBytes, done);
+              if (r == OGG_READ_DONE) return MPG123_DONE;
+              if (r == OGG_READ_ERR)  return -1;
+              return MPG123_OK; }
+        case FORMAT_WAV:
+            if (!mh_wav_next) return -1;
+            { WavReadResult r = wavRead(mh_wav_next, buf, bufBytes, done);
+              if (r == WAV_READ_DONE) return MPG123_DONE;
+              if (r == WAV_READ_ERR)  return -1;
+              return MPG123_OK; }
+        default:
+            if (!mh_next) return -1;
+            return mpg123_read(mh_next, buf, bufBytes, done);
     }
 }
 
-// Close and null-out the current decoder.
 static void closeCurrentDecoder()
 {
-    if (mh)
-    {
-        mpg123_close(mh);
-        mpg123_delete(mh);
-        mh = nullptr;
-    }
-    if (mh_flac)
-    {
-        flacClose(mh_flac);
-        mh_flac = nullptr;
-    }
+    if (mh)      { mpg123_close(mh); mpg123_delete(mh); mh = nullptr; }
+    if (mh_flac) { flacClose(mh_flac); mh_flac = nullptr; }
+    if (mh_ogg)  { oggClose(mh_ogg);   mh_ogg  = nullptr; }
+    if (mh_wav)  { wavClose(mh_wav);   mh_wav  = nullptr; }
 }
 
-// Close and null-out the next-track decoder.
 static void closeNextDecoderAll()
 {
-    if (mh_next)
-    {
-        mpg123_close(mh_next);
-        mpg123_delete(mh_next);
-        mh_next = nullptr;
-    }
-    if (mh_flac_next)
-    {
-        flacClose(mh_flac_next);
-        mh_flac_next = nullptr;
-    }
+    if (mh_next)      { mpg123_close(mh_next); mpg123_delete(mh_next); mh_next = nullptr; }
+    if (mh_flac_next) { flacClose(mh_flac_next); mh_flac_next = nullptr; }
+    if (mh_ogg_next)  { oggClose(mh_ogg_next);   mh_ogg_next  = nullptr; }
+    if (mh_wav_next)  { wavClose(mh_wav_next);   mh_wav_next  = nullptr; }
 }
 
-// Promote next → current (swap pointers, no decoding).
 static void promoteNextToCurrent()
 {
     closeCurrentDecoder();
-    mh        = mh_next;       mh_next      = nullptr;
-    mh_flac   = mh_flac_next;  mh_flac_next = nullptr;
-    g_format  = g_formatNext;
+    mh          = mh_next;       mh_next      = nullptr;
+    mh_flac     = mh_flac_next;  mh_flac_next = nullptr;
+    mh_ogg      = mh_ogg_next;   mh_ogg_next  = nullptr;
+    mh_wav      = mh_wav_next;   mh_wav_next  = nullptr;
+    g_format    = g_formatNext;
 }
 
-// Get format info from whichever decoder is current.
 static bool decoderGetFormat(long* rate, int* ch)
 {
-    if (g_format == FORMAT_FLAC && mh_flac)
+    switch (g_format)
     {
-        *rate = (long)mh_flac->sampleRate;
-        *ch   = (int)mh_flac->channels;
-        return (*rate > 0);
+        case FORMAT_FLAC:
+            if (!mh_flac) return false;
+            *rate = (long)mh_flac->sampleRate; *ch = (int)mh_flac->channels;
+            return (*rate > 0);
+        case FORMAT_OGG:
+            if (!mh_ogg) return false;
+            *rate = (long)mh_ogg->sampleRate; *ch = (int)mh_ogg->channels;
+            return (*rate > 0);
+        case FORMAT_WAV:
+            if (!mh_wav) return false;
+            *rate = (long)mh_wav->sampleRate; *ch = (int)mh_wav->channels;
+            return (*rate > 0);
+        default:
+            if (!mh) return false;
+            { int enc; return mpg123_getformat(mh, rate, ch, &enc) == MPG123_OK; }
     }
-    else if (mh)
-    {
-        int enc;
-        return mpg123_getformat(mh, rate, ch, &enc) == MPG123_OK;
-    }
-    return false;
 }
 
-// Get format info from the next decoder.
-static bool decoderGetFormatNext(long* rate, int* ch)
-{
-    if (g_formatNext == FORMAT_FLAC && mh_flac_next)
-    {
-        *rate = (long)mh_flac_next->sampleRate;
-        *ch   = (int)mh_flac_next->channels;
-        return (*rate > 0);
-    }
-    else if (mh_next)
-    {
-        int enc;
-        return mpg123_getformat(mh_next, rate, ch, &enc) == MPG123_OK;
-    }
-    return false;
-}
-
-// Total sample frames in the current stream (-1 if unknown).
 static int64_t decoderTotalSamples()
 {
-    if (g_format == FORMAT_FLAC && mh_flac)
-        return (int64_t)mh_flac->totalSamples;
-    else if (mh)
+    switch (g_format)
     {
-        off_t len = mpg123_length(mh);
-        return (len > 0) ? (int64_t)len : -1;
+        case FORMAT_FLAC: return mh_flac ? (int64_t)mh_flac->totalSamples : -1;
+        case FORMAT_OGG:  return mh_ogg  ? (int64_t)mh_ogg->totalSamples  : -1;
+        case FORMAT_WAV:  return mh_wav  ? (int64_t)mh_wav->totalSamples  : -1;
+        default:
+            if (!mh) return -1;
+            { off_t len = mpg123_length(mh); return (len > 0) ? (int64_t)len : -1; }
     }
-    return -1;
 }
 
-// Is any current decoder open?
 static bool decoderIsOpen()
 {
-    return (g_format == FORMAT_FLAC) ? (mh_flac != nullptr) : (mh != nullptr);
+    switch (g_format)
+    {
+        case FORMAT_FLAC: return mh_flac != nullptr;
+        case FORMAT_OGG:  return mh_ogg  != nullptr;
+        case FORMAT_WAV:  return mh_wav  != nullptr;
+        default:          return mh      != nullptr;
+    }
+}
+
+static bool nextDecoderIsOpen()
+{
+    return mh_next != nullptr || mh_flac_next != nullptr ||
+           mh_ogg_next != nullptr || mh_wav_next != nullptr;
 }
 
 
@@ -253,37 +265,41 @@ static void closeNextDecoder()
 // Open and configure the decoder for track at `index` into the next-track slot.
 static bool openNextDecoder(int index)
 {
-    closeNextDecoderAll(); // ensure no stale handle
+    closeNextDecoderAll();
 
     const char* path = playlistGetTrack(index);
     if (!path) return false;
 
     g_formatNext = trackFormat(path);
 
-    if (g_formatNext == FORMAT_FLAC)
+    switch (g_formatNext)
     {
-        mh_flac_next = flacOpen(path);
-        return (mh_flac_next != nullptr);
-    }
-    else
-    {
-        mh_next = mpg123_new(nullptr, nullptr);
-        if (!mh_next) return false;
+        case FORMAT_FLAC:
+            mh_flac_next = flacOpen(path);
+            return (mh_flac_next != nullptr);
 
-        mpg123_param(mh_next, MPG123_GAPLESS,      1,                 0);
-        mpg123_param(mh_next, MPG123_ADD_FLAGS,    MPG123_SKIP_ID3V2, 0);
-        mpg123_param(mh_next, MPG123_FORCE_STEREO, 1,                 0);
+        case FORMAT_OGG:
+            mh_ogg_next = oggOpen(path);
+            return (mh_ogg_next != nullptr);
 
-        if (mpg123_open(mh_next, path) != MPG123_OK)
-        { closeNextDecoderAll(); return false; }
+        case FORMAT_WAV:
+            mh_wav_next = wavOpen(path);
+            return (mh_wav_next != nullptr);
 
-        long rate; int ch, enc;
-        if (mpg123_getformat(mh_next, &rate, &ch, &enc) != MPG123_OK)
-        { closeNextDecoderAll(); return false; }
-
-        mpg123_format_none(mh_next);
-        mpg123_format(mh_next, rate, ch, MPG123_ENC_SIGNED_16);
-        return true;
+        default: // FORMAT_MP3
+            mh_next = mpg123_new(nullptr, nullptr);
+            if (!mh_next) return false;
+            mpg123_param(mh_next, MPG123_GAPLESS,      1,                 0);
+            mpg123_param(mh_next, MPG123_ADD_FLAGS,    MPG123_SKIP_ID3V2, 0);
+            mpg123_param(mh_next, MPG123_FORCE_STEREO, 1,                 0);
+            if (mpg123_open(mh_next, path) != MPG123_OK)
+            { closeNextDecoderAll(); return false; }
+            { long rate; int ch, enc;
+              if (mpg123_getformat(mh_next, &rate, &ch, &enc) != MPG123_OK)
+              { closeNextDecoderAll(); return false; }
+              mpg123_format_none(mh_next);
+              mpg123_format(mh_next, rate, ch, MPG123_ENC_SIGNED_16); }
+            return true;
     }
 }
 
@@ -505,43 +521,49 @@ void playerPlay(int index)
     long rate = 0;
     int  ch   = 0;
 
-    if (g_format == FORMAT_FLAC)
+    switch (g_format)
     {
-        mh_flac = flacOpen(path);
-        if (!mh_flac)
-        {
-            printf("Error: flacOpen failed for %s\n", path);
-            return;
-        }
-        rate = (long)mh_flac->sampleRate;
-        ch   = (int)mh_flac->channels;
-    }
-    else
-    {
-        mh = mpg123_new(nullptr, nullptr);
-        if (!mh) { printf("Error: mpg123_new failed\n"); return; }
+        case FORMAT_FLAC:
+            mh_flac = flacOpen(path);
+            if (!mh_flac) { printf("Error: flacOpen failed for %s\n", path); return; }
+            rate = (long)mh_flac->sampleRate;
+            ch   = (int)mh_flac->channels;
+            break;
 
-        mpg123_param(mh, MPG123_GAPLESS,      1,                 0);
-        mpg123_param(mh, MPG123_ADD_FLAGS,    MPG123_SKIP_ID3V2, 0);
-        mpg123_param(mh, MPG123_FORCE_STEREO, 1,                 0);
+        case FORMAT_OGG:
+            mh_ogg = oggOpen(path);
+            if (!mh_ogg) { printf("Error: oggOpen failed for %s\n", path); return; }
+            rate = (long)mh_ogg->sampleRate;
+            ch   = (int)mh_ogg->channels;
+            break;
 
-        if (mpg123_open(mh, path) != MPG123_OK)
-        {
-            printf("Error: failed to open %s\n", path);
-            mpg123_delete(mh); mh = nullptr;
-            return;
-        }
+        case FORMAT_WAV:
+            mh_wav = wavOpen(path);
+            if (!mh_wav) { printf("Error: wavOpen failed for %s\n", path); return; }
+            rate = (long)mh_wav->sampleRate;
+            ch   = (int)mh_wav->channels;
+            break;
 
-        int enc;
-        if (mpg123_getformat(mh, &rate, &ch, &enc) != MPG123_OK)
-        {
-            printf("Error: failed to get format\n");
-            mpg123_close(mh); mpg123_delete(mh); mh = nullptr;
-            return;
-        }
-
-        mpg123_format_none(mh);
-        mpg123_format(mh, rate, ch, MPG123_ENC_SIGNED_16);
+        default: // FORMAT_MP3
+            mh = mpg123_new(nullptr, nullptr);
+            if (!mh) { printf("Error: mpg123_new failed\n"); return; }
+            mpg123_param(mh, MPG123_GAPLESS,      1,                 0);
+            mpg123_param(mh, MPG123_ADD_FLAGS,    MPG123_SKIP_ID3V2, 0);
+            mpg123_param(mh, MPG123_FORCE_STEREO, 1,                 0);
+            if (mpg123_open(mh, path) != MPG123_OK)
+            {
+                printf("Error: failed to open %s\n", path);
+                mpg123_delete(mh); mh = nullptr; return;
+            }
+            { int enc;
+              if (mpg123_getformat(mh, &rate, &ch, &enc) != MPG123_OK)
+              {
+                  printf("Error: failed to get format\n");
+                  mpg123_close(mh); mpg123_delete(mh); mh = nullptr; return;
+              }
+              mpg123_format_none(mh);
+              mpg123_format(mh, rate, ch, MPG123_ENC_SIGNED_16); }
+            break;
     }
 
     g_state.sampleRate = rate;
@@ -560,15 +582,16 @@ void playerPlay(int index)
     g_state.elapsedSeconds = 0;
     g_preloadAttempted     = false;
 
-    // ReplayGain — try FLAC metadata first, fall back to MP3 metadata
-    if (g_format == FORMAT_FLAC)
+    // ReplayGain — pick the right metadata source for this format
     {
-        const Mp3MetadataEntry* meta = flacGetTrackMetadata(index);
-        if (meta) applyReplayGainFromMetadata(*meta);
-    }
-    else
-    {
-        const Mp3MetadataEntry* meta = mp3GetTrackMetadata(index);
+        const Mp3MetadataEntry* meta = nullptr;
+        switch (g_format)
+        {
+            case FORMAT_FLAC: meta = flacGetTrackMetadata(index); break;
+            case FORMAT_OGG:  meta = oggGetTrackMetadata(index);  break;
+            case FORMAT_WAV:  meta = wavGetTrackMetadata(index);  break;
+            default:          meta = mp3GetTrackMetadata(index);  break;
+        }
         if (meta) applyReplayGainFromMetadata(*meta);
     }
 
@@ -580,7 +603,10 @@ void playerPlay(int index)
     g_playbackState = STATE_PLAYING;
 
     printf("Playing [%s]: %s\n",
-           (g_format == FORMAT_FLAC) ? "FLAC" : "MP3", path);
+           g_format == FORMAT_FLAC ? "FLAC" :
+           g_format == FORMAT_OGG  ? "OGG"  :
+           g_format == FORMAT_WAV  ? "WAV"  : "MP3",
+           path);
 }
 
 void playerStop()
@@ -653,7 +679,7 @@ void playerStartCrossfade()
 {
     if (!g_settings.crossfadeEnabled)
         return;
-    if (g_playbackState == STATE_CROSSFADING || mh_next != nullptr || mh_flac_next != nullptr)
+    if (g_playbackState == STATE_CROSSFADING || nextDecoderIsOpen())
         return;
 
     int nextIndex = playerPeekNextIndex();
@@ -691,10 +717,15 @@ void playerSeek(float targetSeconds)
     audio.setPaused(true);
 
     bool ok = false;
-    if (g_format == FORMAT_FLAC && mh_flac)
-        ok = flacSeek(mh_flac, targetSample);
-    else if (mh)
-        ok = (mpg123_seek(mh, (off_t)targetSample, SEEK_SET) >= 0);
+    switch (g_format)
+    {
+        case FORMAT_FLAC: if (mh_flac) ok = flacSeek(mh_flac, targetSample); break;
+        case FORMAT_OGG:  if (mh_ogg)  ok = oggSeek(mh_ogg,   targetSample); break;
+        case FORMAT_WAV:  if (mh_wav)  ok = wavSeek(mh_wav,   targetSample); break;
+        default:
+            if (mh) ok = (mpg123_seek(mh, (off_t)targetSample, SEEK_SET) >= 0);
+            break;
+    }
 
     if (ok)
     {
@@ -798,7 +829,7 @@ void playerUpdate()
 
             /* ---- gapless preload (crossfade OFF) ---- */
             if (!g_settings.crossfadeEnabled &&
-                mh_next == nullptr && mh_flac_next == nullptr &&
+                !nextDecoderIsOpen() &&
                 !g_preloadAttempted &&
                 samplesRemaining <= (int64_t)g_state.sampleRate) // 1 s window
             {
@@ -817,7 +848,7 @@ void playerUpdate()
                     if (mh_next == nullptr && mh_flac_next == nullptr)
                         openNextDecoder(nextIndex);
 
-                    if (mh_next != nullptr || mh_flac_next != nullptr)
+                    if (nextDecoderIsOpen())
                     {
                         promoteNextToCurrent();
                         playerCommitNextTrack(nextIndex);
@@ -853,7 +884,7 @@ void playerUpdate()
                 (int64_t)(g_settings.crossfadeSeconds * g_state.sampleRate);
 
             if (g_settings.crossfadeEnabled &&
-                mh_next == nullptr && mh_flac_next == nullptr &&
+                !nextDecoderIsOpen() &&
                 samplesRemaining > 0 &&
                 samplesRemaining <= crossfadeSamples)
             {

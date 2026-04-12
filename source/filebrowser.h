@@ -4,23 +4,15 @@
 #include <SDL_ttf.h>
 #include <switch.h>
 #include <stdbool.h>
-// Open the browser (scans sdmc:/ root)
+
+// Open the file browser (shows the Add File / Add URL / Cancel menu first)
 void fileBrowserOpen();
 
-// Returns true if browser UI is currently active
+// Returns true while any browser screen is active
 bool fileBrowserIsActive();
 
-// Handle input (D-Pad / A / B)
+// Call every frame to handle controller input
 void fileBrowserUpdate(PadState* pad);
 
-// Draw the browser overlay
+// Call every frame to draw the browser overlay
 void fileBrowserRender(SDL_Renderer* renderer, TTF_Font* font);
-
-// Save current playlist to sdmc:/winamp/playlist.m3u
-void fileBrowserSavePlaylist();
-
-// --- New helpers for selected files ---
-bool fileBrowserDidSelectFolder();   // returns true once after user confirms selection
-const char** fileBrowserGetSelectedFiles();  // returns array of selected file paths
-int fileBrowserGetSelectedFileCount();       // returns number of selected files
-void fileBrowserClearSelection();            // reset selection state
