@@ -484,12 +484,14 @@ static void drawPanSlider(SDL_Renderer* renderer,
     if (pan < -1.0f) pan = -1.0f;
     if (pan >  1.0f) pan =  1.0f;
 
-    // Convert to 0.0 → 1.0
-    float pan01 = (pan + 1.0f) * 0.5f;
+    float pan01 = (pan + 1.0f) * 0.5f;   // 0 → 1
 
-    // --- 2. Convert to sprite index (0–27) ---
     const int totalLevels = 28;
-    int level = (int)(pan01 * (totalLevels - 1) + 0.5f);
+
+    // Mirror around center
+    float dist = fabsf(pan);
+    int half = totalLevels;
+    int level = (int)((1.0f - dist) * (half - 1) + 0.01f);
 
     const int colorStartX = 74;   // start of color strip
     const int colorStartY = 37;
@@ -498,8 +500,10 @@ static void drawPanSlider(SDL_Renderer* renderer,
     const int frameGap = 33;       // set >0 if there is spacing
 
     if (level < 0) level = 0;
-    if (level >= totalLevels) level = totalLevels - 1;
 
+    if (level >= totalLevels) level = totalLevels + 1;
+
+    printf("level = %d\n", level);
     int srcX = colorStartX + level * (frameW + frameGap);
 
     SDL_Rect srcBar = { srcX, colorStartY, frameW, frameH };
@@ -519,9 +523,6 @@ static void drawPanSlider(SDL_Renderer* renderer,
 
     int knobTravel = barRect.h - srcKnob.h;
 
-    // 0.0 (LEFT)  -> TOP
-    // 0.5 (CENTER)-> MIDDLE
-    // 1.0 (RIGHT) -> BOTTOM
     int knobOffset = (int)(pan01 * knobTravel);
 
     SDL_Rect dstKnob = {
@@ -573,7 +574,7 @@ static void drawVolumeBar(SDL_Renderer* renderer,
     int knobOffset = (int)(volume * knobTravel);
 
     SDL_Rect dstKnob = {
-        barRect.x + (barRect.w - srcKnob.w) / 2,
+        barRect.x + 5 + (barRect.w - srcKnob.w) / 2,
         barRect.y + knobOffset,
         srcKnob.w,
         srcKnob.h
@@ -1040,7 +1041,7 @@ static void drawPlaylistSlider(SDL_Renderer* renderer,
 
     int travel = trackW - knobW;
     int knobX  = trackX + (int)(t * travel);
-    int knobY  = trackY;
+    int knobY  = trackY + 10;
 
     SDL_Rect dstKnob = { knobX, knobY, knobW, knobH };
 
@@ -1311,12 +1312,12 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     drawPreampSlider(renderer, texEQMAIN, eqBand1);
 
 
-    SDL_Rect volumeBarRect = { 1551, 421, 40, 264 }; // adjust to your skin
+    SDL_Rect volumeBarRect = { 1552, 421, 40, 264 }; // adjust to your skin
 
     drawVolumeBar(renderer, texVolume, volumeBarRect);
 
 
-    SDL_Rect panSlider     = {1552, 698,40,145};
+    SDL_Rect panSlider     = {1558, 698,40,145};
 
     SDL_Rect addPlaylist   = {70,  42,100,100};
     SDL_Rect rmPlaylist    = {70, 158,100,100};
