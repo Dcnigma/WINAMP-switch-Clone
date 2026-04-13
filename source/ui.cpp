@@ -503,7 +503,7 @@ static void drawPanSlider(SDL_Renderer* renderer,
 
     if (level >= totalLevels) level = totalLevels + 1;
 
-    printf("level = %d\n", level);
+    //printf("level = %d\n", level);
     int srcX = colorStartX + level * (frameW + frameGap);
 
     SDL_Rect srcBar = { srcX, colorStartY, frameW, frameH };

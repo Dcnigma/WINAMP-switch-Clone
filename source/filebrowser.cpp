@@ -80,6 +80,7 @@
 #define BR_BTNS_H         80   // cancel/done row
 #define BR_HINT_H         60   // hint text row
 #define BR_GAP            110
+#define BR_GAP2           10
 // Text area Y/H for full-width rows
 #define BR_TXT_Y          20
 #define BR_TXT_H         (FBH - 40)
@@ -650,6 +651,7 @@ void fileBrowserRender(SDL_Renderer* r, TTF_Font* font)
 
         /* ---- Cancel / Done row ---- */
         {
+          x -= BR_GAP2;
           x -= BR_BTNS_H;
 
           int half = FBH/2 - 10;
