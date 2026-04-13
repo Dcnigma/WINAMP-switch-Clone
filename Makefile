@@ -68,7 +68,7 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
-LIBS        := `$(PREFIX)pkg-config --libs sdl2 SDL2_mixer SDL2_image SDL2_ttf`
+LIBS        := `$(PREFIX)pkg-config --libs sdl2 SDL2_mixer SDL2_image SDL2_ttf FLAC`
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
