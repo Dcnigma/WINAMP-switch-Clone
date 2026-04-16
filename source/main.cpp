@@ -107,53 +107,53 @@ int main()
         updateStayAwakeLogic();
         //New controller inputs
         controllerUpdate();
-        //controllerHandlePlayerControls();
         PadState* pad = controllerGetPad();
         u64 down = padGetButtonsDown(pad);
         u64 up   = padGetButtonsUp(pad);
         u64 now  = svcGetSystemTick();
 
-        // File browser open
+        // -------------------------------------------------------
+        // EXCLUSIVE INPUT FOCUS
+        // Only one screen owns input at a time.
+        // Priority: filebrowser > settings > player
+        // Nothing leaks through to a lower-priority handler.
+        // -------------------------------------------------------
+
         if (down & HidNpadButton_Plus)
-             break;
+            break;  // always quit regardless of focus
 
-         // File browser open todo: needs some tweaks, this should be mapped to the "eject button" in touchscreen.
-         // if the "add button" (touchscreen) is used in the playlist window it should not do a playlistclear.
-         if (fileBrowserIsActive())
-         {
-             fileBrowserUpdate(pad);
-         }
-         else if (down & HidNpadButton_B)
-         {
-             playerStop();
-             playlistClear();
-             mp3CancelAllScans();
-             mp3ClearMetadata();
-             flacCancelAllScans();
-             flacClearMetadata();
-             oggCancelAllScans();
-             oggClearMetadata();
-             wavCancelAllScans();
-             wavClearMetadata();
-             fileBrowserOpen();
-         }
-         // Play first track with A
-         if (!fileBrowserIsActive() && (down & HidNpadButton_A))
-         {
-             if (playlistGetCount() > 0)
-                 playerPlay(playlistGetCurrentIndex());
-         }
-
-         if (down & HidNpadButton_StickL)
-             settingsOpen();
-         if (settingsIsOpen())
-         {
-             settingsHandleInput(pad);
-         }
-         else
-         {
-             controllerHandlePlayerControls();
-         }
+        if (fileBrowserIsActive())
+        {
+            // Filebrowser owns ALL input — player and settings get nothing.
+            fileBrowserUpdate(pad);
+        }
+        else if (settingsIsOpen())
+        {
+            // Settings owns ALL input — player gets nothing.
+            // StickL while settings is open is ignored (already open).
+            settingsHandleInput(pad);
+        }
+        else
+        {
+            // Player / playlist owns input.
+            // Open filebrowser with B.
+            if (down & HidNpadButton_B)
+            {
+                playerStop();
+                fileBrowserOpen();
+            }
+            // Open settings with StickL.
+            else if (down & HidNpadButton_StickL)
+            {
+                settingsOpen();
+            }
+            else
+            {
+                // Full player controls — A, Up, Down, Left, Right etc.
+                // are safe here because no overlay is active.
+                controllerHandlePlayerControls();
+            }
+        }
         updateAutoEQ();
         playerUpdate();
 
@@ -164,7 +164,6 @@ int main()
         int idx = playerGetCurrentTrackIndex();
         if (idx >= 0)
         {
-            // Try each format's metadata store in turn
             const Mp3MetadataEntry* md = mp3GetTrackMetadata(idx);
             if (!md) md = flacGetTrackMetadata(idx);
             if (!md) md = oggGetTrackMetadata(idx);

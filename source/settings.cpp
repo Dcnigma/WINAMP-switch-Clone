@@ -5,19 +5,11 @@
 #include <SDL.h>
 #include <SDL_ttf.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <algorithm>
 
 /* ============================================================
-   COORDINATE SYSTEM — same as fixed filebrowser.cpp
-   FB rect {x, y, w, h}:
-     x     = FB left  = screen top    (portrait)
-     x+w   = FB right = screen bottom
-     y     = FB top   = screen left
-     y+h   = FB bot   = screen right
-   Screen height (top→bottom) = FBW = 1920
-   Screen width  (left→right) = FBH = 1080
-   Rows drawn from HIGH FB X down to LOW FB X
-   (high x = screen bottom, low x = screen top)
+   COORDINATE SYSTEM
 ============================================================ */
 #define FBW  1920
 #define FBH  1080
@@ -25,6 +17,7 @@
 // Layout — all FB X values
 #define S_MARGIN_BOT   200   // blank at bottom of screen  = low FB X margin
 #define S_MARGIN_TOP   400   // blank at top of screen     = high FB X margin
+#define S_HDR_H          80   // "// SELECT FILES [<][>]" header
 #define S_TITLE_H       80   // "// SETTINGS" title row
 #define S_ROW_H        160   // each setting row height
 #define S_GAP            8   // gap between rows
@@ -76,57 +69,116 @@ void settingsClose() { g_settingsOpen = false; }
 bool settingsIsOpen(){ return g_settingsOpen; }
 
 /* ============================================================
+   SETTINGS SAVE
+============================================================ */
+static void settingsSave()
+{
+    // Make sure the directory exists
+    mkdir("sdmc:/config",        0777);
+    mkdir("sdmc:/config/winamp", 0777);
+
+    FILE* f = fopen("sdmc:/config/winamp/settings.json", "w");
+    if (!f)
+    {
+        printf("[Settings] Failed to open settings.json for writing\n");
+        return;
+    }
+
+    const char* replayGainStr =
+        (g_settings.replayGainMode == REPLAYGAIN_TRACK) ? "TRACK" :
+        (g_settings.replayGainMode == REPLAYGAIN_ALBUM) ? "ALBUM" : "OFF";
+
+    fprintf(f,
+        "{\n"
+        "  \"crossfadeEnabled\": %s,\n"
+        "  \"crossfadeSeconds\": %.1f,\n"
+        "  \"autoGainEnabled\": %s,\n"
+        "  \"replayGainMode\": \"%s\"\n"
+        "}\n",
+        g_settings.crossfadeEnabled ? "true" : "false",
+        g_settings.crossfadeSeconds,
+        g_settings.autoGainEnabled  ? "true" : "false",
+        replayGainStr
+    );
+
+    fclose(f);
+    printf("[Settings] Saved to sdmc:/config/winamp/settings.json\n");
+}
+
+/* ============================================================
+   PAGE NAVIGATION STATE
+   For future expansion: the > button navigates to next settings page.
+   Currently only 1 page exists, so canFwd/canBack are always false.
+   The > button is rendered but hidden until a second page is added.
+============================================================ */
+static int  g_settingsPage    = 0;
+static const int SETTINGS_PAGES = 1;  // increase when you add more settings
+// Which item index the > button maps to (navigated like a regular item)
+#define SETTING_PAGE_NEXT  (SETTINGS_COUNT)      // virtual index for > button
+#define SETTING_PAGE_PREV  (SETTINGS_COUNT + 1)  // virtual index for < button
+static int  g_totalItems = SETTINGS_COUNT; // + optional page nav buttons
+
+/* ============================================================
    INPUT
 ============================================================ */
 void settingsHandleInput(PadState* pad)
 {
     u64 down = padGetButtonsDown(pad);
 
-    // X = close
-    if(down & HidNpadButton_X){ settingsClose(); return; }
+    // X = close without saving
+    if (down & HidNpadButton_X) { settingsClose(); return; }
 
-    // Up/Down navigate — on portrait screen Up = towards top = lower FB X,
-    // which in our reversed layout means increasing index
-    if(down & HidNpadButton_Down){
-        g_selectedItem++;
-        if(g_selectedItem >= SETTINGS_COUNT) g_selectedItem = 0;
-    }
-    if(down & HidNpadButton_Up){
+    if (down & HidNpadButton_Up)
+    {
         g_selectedItem--;
-        if(g_selectedItem < 0) g_selectedItem = SETTINGS_COUNT - 1;
+        if (g_selectedItem < 0)
+            g_selectedItem = SETTINGS_COUNT - 1;
+    }
+    if (down & HidNpadButton_Down)
+    {
+        g_selectedItem++;
+        if (g_selectedItem >= SETTINGS_COUNT)
+            g_selectedItem = 0;
     }
 
     // A = toggle / activate
-    if(down & HidNpadButton_A){
-        switch(g_selectedItem){
+    if (down & HidNpadButton_A)
+    {
+        switch (g_selectedItem)
+        {
             case SETTING_CROSSFADE:
                 g_settings.crossfadeEnabled = !g_settings.crossfadeEnabled;
                 break;
+
             case SETTING_CROSSFADE_TIME:
                 g_settings.crossfadeSeconds = 3.0f; // reset to default
                 break;
+
             case SETTING_REPLAYGAIN:
-                // Cycle OFF → TRACK → ALBUM → OFF
-                if(g_settings.replayGainMode == REPLAYGAIN_OFF)
+                if (g_settings.replayGainMode == REPLAYGAIN_OFF)
                     g_settings.replayGainMode = REPLAYGAIN_TRACK;
-                else if(g_settings.replayGainMode == REPLAYGAIN_TRACK)
+                else if (g_settings.replayGainMode == REPLAYGAIN_TRACK)
                     g_settings.replayGainMode = REPLAYGAIN_ALBUM;
                 else
                     g_settings.replayGainMode = REPLAYGAIN_OFF;
                 break;
+
             case SETTING_AUTOGAIN:
                 g_settings.autoGainEnabled = !g_settings.autoGainEnabled;
                 break;
+
             case SETTING_SAVESETTINGS:
+                settingsSave();
                 settingsClose();
                 break;
+
             case SETTING_BACK:
                 settingsClose();
                 break;
         }
     }
 
-    // Left/Right = adjust value for selected item
+    // Left/Right = adjust values
     if((down & HidNpadButton_Left) || (down & HidNpadButton_Right))
     {
         float step = (down & HidNpadButton_Left) ? -0.5f : 0.5f;
@@ -160,7 +212,7 @@ void settingsHandleInput(PadState* pad)
 }
 
 /* ============================================================
-   DRAW HELPERS  (same pattern as filebrowser)
+   DRAW HELPERS
 ============================================================ */
 static void sDrawBox(SDL_Renderer* r, SDL_Rect rect,
                      SDL_Color fill, SDL_Color border, int thick=2)
@@ -268,25 +320,9 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
     SDL_Rect overlay={0,0,FBW,FBH};
     SDL_RenderFillRect(renderer, &overlay);
 
-    /* Layout (screen top → bottom = decreasing FB X):
-       Screen top    (high FB X end):
-         [S_MARGIN_TOP]         blank
-         [S_TITLE_H]            "// SETTINGS"
-         [S_ROW_H]              Crossfade        (SETTING_CROSSFADE)
-         [S_GAP]
-         [S_ROW_H]              Crossfade Time   (SETTING_CROSSFADE_TIME)
-         [S_GAP]
-         [S_ROW_H]              ReplayGain       (SETTING_REPLAYGAIN)
-         [S_GAP]
-         [S_ROW_H]              Auto Gain        (SETTING_AUTOGAIN)
-         [S_GAP]
-         [S_SAVE_H]             Save Settings    (SETTING_AUTO_EQ — repurposed as Save)
-         [S_GAP]
-         [S_SAVE_H]             Back             (SETTING_BACK)
-         [S_HINT_H]             hint
-       Screen bottom (low FB X end):
-         [S_MARGIN_BOT]         blank
-    */
+/*============================================================
+     Layout
+============================================================ */
 
     // Start position: high FB X end, walk down
     int x = FBW - S_MARGIN_TOP;
@@ -295,6 +331,35 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
     x -= S_TITLE_H;
     sDrawRow(renderer, x, S_TITLE_H, SC_TITLE, SC_BORDER, 2);
     fbRowTextLeft(renderer, font, "// SETTINGS", x, S_TITLE_H, SC_GREEN, 30, -15);
+
+    // [<] Prev page button — only shown when multiple pages exist and we're past page 0
+    // Currently hidden (SETTINGS_PAGES == 1), drawn as placeholder for future use
+    bool canBack = (g_settingsPage > 0);
+    bool canFwd  = (g_settingsPage < SETTINGS_PAGES - 1);
+
+    if (canBack)
+    {
+        bool selNav = (g_selectedItem == SETTING_PAGE_PREV);
+        SDL_Color navBg  = selNav ? SC_SEL : COL_BTN;
+        SDL_Color navBrd = selNav ? SC_BORDER : SC_BRD_DIM;
+        SDL_Rect lb = {x + (S_HDR_H - 50)/2, FBH - 40 - 180, 50, 80};
+        sDrawBox(renderer, lb, navBg, navBrd, selNav ? 3 : 2);
+        SDL_Rect tr = {lb.x + 30, lb.y, lb.w, lb.h};
+        drawVerticalText(renderer, font, "<", tr,
+                         selNav ? SC_GREEN : SC_GREY, 0, 0, ALIGN_CENTER);
+    }
+
+    if (canFwd)
+    {
+        bool selNav = (g_selectedItem == SETTING_PAGE_NEXT);
+        SDL_Color navBg  = selNav ? SC_SEL : COL_BTN;
+        SDL_Color navBrd = selNav ? SC_BORDER : SC_BRD_DIM;
+        SDL_Rect rb = {x + (S_HDR_H - 50)/2, FBH - 40 - 80, 50, 80};
+        sDrawBox(renderer, rb, navBg, navBrd, selNav ? 3 : 2);
+        SDL_Rect tr = {rb.x + 30, rb.y, rb.w, rb.h};
+        drawVerticalText(renderer, font, ">", tr,
+                         selNav ? SC_GREEN : SC_GREY, 0, 0, ALIGN_CENTER);
+    }
 
     // Setting rows — defined top→bottom (high FB X → low FB X)
     struct SettingRow {
@@ -308,8 +373,6 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
         { SETTING_CROSSFADE_TIME,   "Crossfade Time", false, false },
         { SETTING_REPLAYGAIN,       "ReplayGain",     false, false },
         { SETTING_AUTOGAIN,         "Auto Gain",      false, false },
-//        { SETTING_SAVESETTINGS,     "Save Settings",  false, true  },
-//        { SETTING_BACK,             "Back",           true,  false },
     };
 
     for(auto& sr : srows)
@@ -343,7 +406,7 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
                     //sRowValue(renderer, font, val, x, rowH,g_settings.crossfadeEnabled ? SC_GREEN : SC_GREY, 30);
                     // Toggle box
                     {
-                        const int BW=50, BH=36;
+                        const int BW=100, BH=100;
                         int by = FBH - BW - 20;
                         int bx = x + (rowH - BH)/2;
                         SDL_Color bbg = g_settings.crossfadeEnabled
@@ -386,7 +449,7 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
                         //sRowValue(renderer, font, val, x, rowH,g_settings.autoGainEnabled ? SC_GREEN : SC_GREY, 30);
                         // Toggle box
                         {
-                            const int BW=50, BH=36;
+                            const int BW=100, BH=100;
                             int by = FBH - BW - 20;
                             int bx = x + (rowH - BH)/2;
                             SDL_Color bbg = g_settings.autoGainEnabled
@@ -409,20 +472,31 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
 
     int half = FBH/2 - 10;
 
-    // Save Settings LEFT
-    SDL_Rect cancel={x, 5, S_BTNS_H, half};
+    // Save Settings — LEFT half (low FB Y = screen left)
+    {
+        bool sel = (g_selectedItem == SETTING_SAVESETTINGS);
+        SDL_Color bg  = sel ? SC_SEL   : SC_BLOCK;
+        SDL_Color brd = sel ? SC_BORDER : SC_BRD_DIM;
+        SDL_Color tc  = sel ? SC_GREEN  : SC_WHITE;
 
-    sDrawBox(renderer, cancel, SC_BLOCK, SC_BRD_DIM, 1);
-//          drawVerticalText(r,font,"Cancel",cancel,COL_GREY,0,50,ALIGN_CENTER);
-    SDL_Rect cancelText = {cancel.x + 10, cancel.y, cancel.w, cancel.h};
-    drawVerticalText(renderer,font,"Save Settings",cancelText,SC_WHITE,0,0,ALIGN_CENTER);
+        SDL_Rect saveBtn = {x, 5, S_BTNS_H, half};
+        sDrawBox(renderer, saveBtn, bg, brd, sel ? 3 : 1);
+        SDL_Rect saveText = {saveBtn.x + 10, saveBtn.y, saveBtn.w, saveBtn.h};
+        drawVerticalText(renderer, font, "Save Settings", saveText, tc, 0, 0, ALIGN_CENTER);
+    }
 
-    // Done RIGHT
-    SDL_Rect done  ={x, FBH/2+5, S_BTNS_H, half};
-    sDrawBox(renderer, done, SC_BLOCK, SC_BRD_DIM, 2);
-//          drawVerticalText(r,font,"Done",done,COL_GREEN,0,50,ALIGN_CENTER);
-    SDL_Rect doneText = {done.x + 10, done.y, done.w, done.h};
-    drawVerticalText(renderer,font,"Back",doneText,SC_WHITE,0,0,ALIGN_CENTER);
+    // Back — RIGHT half (high FB Y = screen right)
+    {
+        bool sel = (g_selectedItem == SETTING_BACK);
+        SDL_Color bg  = sel ? SC_SEL   : SC_BLOCK;
+        SDL_Color brd = sel ? SC_BORDER : SC_BRD_DIM;
+        SDL_Color tc  = sel ? SC_GREEN  : SC_WHITE;
+
+        SDL_Rect backBtn = {x, FBH/2 + 5, S_BTNS_H, half};
+        sDrawBox(renderer, backBtn, bg, brd, sel ? 3 : 1);
+        SDL_Rect backText = {backBtn.x + 10, backBtn.y, backBtn.w, backBtn.h};
+        drawVerticalText(renderer, font, "Back", backText, tc, 0, 0, ALIGN_CENTER);
+    }
 
 
     // Hint row at very bottom (lowest FB X area)
