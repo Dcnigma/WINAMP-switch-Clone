@@ -2,6 +2,26 @@
 
 A Winamp-inspired music player UI for Nintendo Switch homebrew, featuring a classic-style spectrum analyzer, playlist, and MP3 playback.
 
+
+# Screenshots
+
+**Main UI**
+
+<img src="https://raw.githubusercontent.com/Dcnigma/WINAMP-switch-Clone/refs/heads/main/Screenshots/Main.jpg" width=20% height=20%>
+
+**Add Files**
+
+<img src="https://raw.githubusercontent.com/Dcnigma/WINAMP-switch-Clone/refs/heads/main/Screenshots/Addtoplaylist.jpg" width=20% height=20%>    <img src="https://raw.githubusercontent.com/Dcnigma/WINAMP-switch-Clone/refs/heads/main/Screenshots/Folderselect.jpg" width=20% height=20%>    <img src="https://raw.githubusercontent.com/Dcnigma/WINAMP-switch-Clone/refs/heads/main/Screenshots/Selectfiles.jpg" width=20% height=20%>
+
+- Add Url is not done.
+- Flac, MP3, OGG and WAV supported. 
+
+**Settings**
+
+<img src="https://raw.githubusercontent.com/Dcnigma/WINAMP-switch-Clone/refs/heads/main/Screenshots/Settings.jpg" width=20% height=20%>
+
+
+
 ## ✨ Features
 
 - 🎚 Winamp-style vertical spectrum visualizer (20 bars)
