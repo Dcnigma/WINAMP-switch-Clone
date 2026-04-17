@@ -1,0 +1,111 @@
+Can you try again because it doesn't look like I expected.
+
+
+
+The First Menu Screen needs to have :
+
+More Margin same as the second screen.
+
+Title box "// Add to Playlist"
+
+Then a option to select "Add Files" (opens the Next Browse screen)
+
+ another option for "Add URL" (Not used atm)
+
+And then the last button shows "A: Select  B: Cancel" (closes the screen)
+
+But it needs to be smaller like this:
+
+_______________
+
+|        Margin         |  +- 200 px
+
+--------------------
+
+| // Select Files  | <  Title  (not selectable)
+
+--------------------
+
+|     Add FILES.   | ( Button opens the Next Browse screen)
+
+--------------------
+
+|       Add URL     | (Button Not used atm)
+
+--------------------
+
+| A: Sel. B: Can. | (closes Button the screen)
+
+--------------------
+
+|        Margin         | +-  500px
+
+--------------------
+
+I want the select screen to be in the centre of the the switch.
+
+
+
+
+
+For the second screen  "Browse"
+
+I made  a text view:
+
+_____________________
+
+|                    Margin            | +- 200 px
+
+|----------------------------|
+
+| //Select Files  [<] [>] |   <  Title   + Scroll indicator arrows move them up. Like i show here.
+
+|----------------------------|
+
+| [folder] files             [+]|   1 Also the checkmark needs to rotate, now its a  > but needs to be V
+
+|----------------------------|
+
+| [folder] files             [v]|  2
+
+|----------------------------|
+
+| [folder] files             [+]|  3
+
+|----------------------------|
+
+| [folder] files             [+]|  4
+
+|----------------------------|
+
+| [folder] files             [+]|  5
+
+|----------------------------|
+
+| [folder] files             [+]|  6
+
+|----------------------------|
+
+| [  cancel  ]  [   done  ]  |  Keep these buttons next to each other
+
+|----------------------------|
+
+|                hit info                | Hint info "A:Enter  B:Folder  X:Menu  Left:Sidebar"
+
+|____________________|
+
+|                    Margin            | +-  500px
+
+|----------------------------|
+
+
+
+Scroll indicator arrows can have function if selected and pressed A it progress 6 files  incase >
+
+and goes Back 6 Files back if < is pressed.
+
+If the first 6 files are visible the < is not shown.
+
+
+
+Hope this helps explaining how i want it.

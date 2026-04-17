@@ -16,7 +16,7 @@
 
 #include "settings.h"
 #include "settings_state.h"
-
+#include "touchscreen.h"
 
 #define FB_W 1920
 #define FB_H 1080
@@ -154,6 +154,8 @@ int main()
                 controllerHandlePlayerControls();
             }
         }
+        touchUpdate();
+        touchHandleInput(fileBrowserIsActive(), settingsIsOpen());
         updateAutoEQ();
         playerUpdate();
 
