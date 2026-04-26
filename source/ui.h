@@ -16,6 +16,7 @@ enum UIButton
 {
     UI_BTN_PLAY,
     UI_BTN_PAUSE,
+    UI_BTN_STOP,
     UI_BTN_NEXT,
     UI_BTN_PREV
 };

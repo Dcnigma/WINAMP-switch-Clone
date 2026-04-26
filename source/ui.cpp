@@ -68,6 +68,7 @@ static bool uiPrevPressed  = false;
 static bool uiNextPressed  = false;
 static bool uiPlayPressed  = false;
 static bool uiPausePressed = false;
+static bool uiStopPressed = false;
 static int  uiPressTimer   = 0;
 
 static const int UI_PRESS_FRAMES = 6; // ~100ms at 60fps
@@ -109,12 +110,13 @@ enum CButtonType {
 // ---- CBUTTONS.png ----
 // Default buttons (right column)
 SDL_Rect cb_default[] = {
-    {68,   0, 76, 91},   // previous
-    {68,  92, 76, 91},   // play
-    {68, 181, 76, 91},   // pause
-    {68, 273, 76, 91},   // stop
-    {68, 365, 76, 91},   // next
-    {72, 453, 76, 91}    // eject
+  // X    Y    W   H
+    {68,   0, 70, 91},   // previous
+    {68,  92, 70, 91},   // play
+    {68, 181, 70, 91},   // pause
+    {68, 273, 70, 91},   // stop
+    {68, 365, 70, 91},   // next
+    {75, 462, 68, 84}    // eject
 };
 
 SDL_Rect cb_pressed[] = {
@@ -123,7 +125,7 @@ SDL_Rect cb_pressed[] = {
     {  0, 181, 69, 93},  // pause
     {  0, 273, 69, 93},  // stop
     {  0, 365, 69, 93},  // next
-    {  0, 455, 69, 93}   // eject
+    {  2, 462, 68, 84}   // eject
 };
 
 
@@ -377,6 +379,7 @@ void uiNotifyButtonPress(UIButton btn)
     {
         case UI_BTN_PLAY:  uiPlayPressed  = true; break;
         case UI_BTN_PAUSE: uiPausePressed = true; break;
+        case UI_BTN_STOP:  uiStopPressed  = true; break;
         case UI_BTN_NEXT:  uiNextPressed  = true; break;
         case UI_BTN_PREV:  uiPrevPressed  = true; break;
     }
@@ -1201,6 +1204,7 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
           uiNextPressed  = false;
           uiPlayPressed  = false;
           uiPausePressed = false;
+          uiStopPressed = false;
       }
   }
     // --- Live playtime string ---
@@ -1234,17 +1238,17 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
     SDL_Rect pauseButton   = {1340, 242,100, 90};
     SDL_Rect stopButton    = {1340, 332,100, 90};
     SDL_Rect nextButton    = {1340, 426,100, 90};
-    SDL_Rect ejectButton   = {1340, 532,100, 90};
+    SDL_Rect ejectButton   = {1345, 529,95, 80};
     SDL_Rect shuffleButton = {1357, 642, 72,182};
-    SDL_Rect repeatButton  = {1357, 825, 72,115};
-
+    SDL_Rect repeatButton  = {1357, 825, 72,110};
+                            // X    Y    W   H
     bool isPlaying = playerIsPlaying();
     bool isPaused  = playerIsPaused();   // add this getter if missing
 
     DrawCButton(renderer, texCbuttons, BTN_PREV,  prevButton,  uiPrevPressed);
     DrawCButton(renderer, texCbuttons, BTN_PLAY,  playButton,  uiPlayPressed || (isPlaying && !isPaused));
     DrawCButton(renderer, texCbuttons, BTN_PAUSE, pauseButton, uiPausePressed || isPaused);
-    DrawCButton(renderer, texCbuttons, BTN_STOP,  stopButton,  false);
+    DrawCButton(renderer, texCbuttons, BTN_STOP,  stopButton,  uiStopPressed);
     DrawCButton(renderer, texCbuttons, BTN_NEXT,  nextButton,  uiNextPressed);
     DrawCButton(renderer, texCbuttons, BTN_EJECT, ejectButton, false);
 
@@ -1318,12 +1322,12 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
 
 
     SDL_Rect panSlider     = {1558, 698,40,145};
-
-    SDL_Rect addPlaylist   = {70,  42,100,100};
-    SDL_Rect rmPlaylist    = {70, 158,100,100};
-    SDL_Rect selPlaylist   = {70, 270,100,100};
-    SDL_Rect miscPlaylist  = {70, 383,100,100};
-    SDL_Rect ListOptions   = {70, 893,100,100};
+    //
+    // SDL_Rect addPlaylist   = {70,  42,100,100};
+    // SDL_Rect rmPlaylist    = {70, 158,100,100};
+    // SDL_Rect selPlaylist   = {70, 270,100,100};
+    // SDL_Rect miscPlaylist  = {70, 383,100,100};
+    // SDL_Rect ListOptions   = {70, 893,100,100};
     SDL_Rect Duration      = {45, 765,50,100};
     SDL_Rect TotPylDurat   = {109, 512,63, 358};
 
@@ -1334,11 +1338,11 @@ void uiRender(SDL_Renderer* renderer, TTF_Font* font, TTF_Font* fontBig, SDL_Tex
 
     drawPanSlider(renderer, texPan, panSlider);
 
-    drawRect(renderer, addPlaylist, 150,150,0,150);
-    drawRect(renderer, rmPlaylist, 0,150,150,150);
-    drawRect(renderer, selPlaylist, 150,150,0,150);
-    drawRect(renderer, miscPlaylist, 0,150,150,150);
-    drawRect(renderer, ListOptions, 150,150,0,150);
+    // drawRect(renderer, addPlaylist, 150,150,0,150);
+    // drawRect(renderer, rmPlaylist, 0,150,150,150);
+    // drawRect(renderer, selPlaylist, 150,150,0,150);
+    // drawRect(renderer, miscPlaylist, 0,150,150,150);
+    // drawRect(renderer, ListOptions, 150,150,0,150);
 
     computeSpectrum();
 

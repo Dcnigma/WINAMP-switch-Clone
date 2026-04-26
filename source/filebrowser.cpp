@@ -186,11 +186,11 @@ static void doCommit(){
     for(auto& f:g_pendFolders) commitFolder(f.c_str());
     for(auto& f:g_pendFiles)   commitFile(f.c_str());
     playlistScroll=0;
-    g_pendFolders.clear(); g_pendFiles.clear();
+    //g_pendFolders.clear(); g_pendFiles.clear();
     g_screen=FB_NONE;
 }
 static void doCancel(){
-    g_pendFolders.clear(); g_pendFiles.clear();
+    //g_pendFolders.clear(); g_pendFiles.clear();
     g_screen=FB_NONE;
 }
 
@@ -236,7 +236,15 @@ void fileBrowserOpen(){
     g_menuSel=0; g_screen=FB_MENU; g_cooldown=10;
     g_pendFiles.clear(); g_pendFolders.clear();
 }
+
+void fileBrowserOpenadd(){
+    g_menuSel=0; g_screen=FB_MENU; g_cooldown=10;
+}
 bool fileBrowserIsActive(){ return g_screen!=FB_NONE; }
+
+bool fileBrowserIsMenu() { return g_screen == FB_MENU; }
+bool fileBrowserIsBrowse() { return g_screen == FB_BROWSE; }
+int fileBrowserGetItemCount() { return (int)g_items.size(); }
 
 void fileBrowserScrollPage(int dir, int jump){
     if(g_screen!=FB_BROWSE) return;
@@ -322,6 +330,98 @@ void fileBrowserUpdate(PadState* pad){
         if(dn&HidNpadButton_X)    g_screen=FB_MENU;
         if(dn&HidNpadButton_Plus) doCancel();
     }
+}
+
+void fileBrowserTapRow(int visibleIndex)
+{
+    // Special case: -1 means menu selection (Add FILES)
+    if (visibleIndex == -1)
+    {
+        // Open browse screen (same as pressing A on "Add FILES" menu item)
+        scanDir("sdmc:/");
+        g_screen = FB_BROWSE;
+        g_cooldown = 6;
+        return;
+    }
+    
+    int idx = g_scroll + visibleIndex;
+    if (idx < 0 || idx >= (int)g_items.size()) return;
+
+    FBItem& it = g_items[idx];
+    g_sel = idx;
+
+    // Enter directory or toggle file selection
+    if (it.isDir)
+    {
+        if (strcmp(it.name, "..") == 0)
+        {
+            // Go up one directory
+            char* last = strrchr(g_path, '/');
+            if (last && last != g_path)
+            {
+                *last = '\0';
+                if (strcmp(g_path, "sdmc:") == 0)
+                    strlcat(g_path, "/", sizeof(g_path));
+            }
+            scanDir(g_path);
+        }
+        else
+        {
+            scanDir(it.fullpath);
+        }
+    }
+    else
+    {
+        // For files, tapping toggles selection
+        fileBrowserToggleAdd(visibleIndex);
+    }
+}
+
+void fileBrowserToggleAdd(int visibleIndex)
+{
+    int idx = g_scroll + visibleIndex;
+    if (idx < 0 || idx >= (int)g_items.size()) return;
+
+    FBItem& it = g_items[idx];
+
+    if (it.isDir && strcmp(it.name, "..") != 0)
+    {
+        // Toggle folder in pending list
+        if (it.added)
+        {
+            g_pendFolders.erase(it.fullpath);
+            it.added = false;
+        }
+        else
+        {
+            g_pendFolders.insert(it.fullpath);
+            it.added = true;
+        }
+    }
+    else if (!it.isDir && isAudio(it.name))
+    {
+        // Toggle file in pending list
+        if (it.added)
+        {
+            g_pendFiles.erase(it.fullpath);
+            it.added = false;
+        }
+        else
+        {
+            g_pendFiles.insert(it.fullpath);
+            it.added = true;
+        }
+    }
+}
+
+void fileBrowserCancel()
+{
+    doCancel(); // This function already exists in your code
+}
+
+void fileBrowserDone()
+{
+    doCommit(); // This function already exists in your code
 }
 
 /* ============================================================
@@ -675,7 +775,7 @@ void fileBrowserRender(SDL_Renderer* r, TTF_Font* font)
 
         }
 
-        /* ---- Hint row ---- */
+        /* ----- Hint row ----- */
         {
           x -= BR_HINT_H;
           fbDrawRow(r, x, BR_HINT_H,

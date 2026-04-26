@@ -7,6 +7,7 @@
 void settingsOpen();
 void settingsClose();
 bool settingsIsOpen();
+void settingsSave();
 
 void settingsRender(SDL_Renderer* renderer, TTF_Font* font);
 void settingsHandleInput(PadState* pad);

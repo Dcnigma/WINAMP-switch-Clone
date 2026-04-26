@@ -12,6 +12,10 @@ void playlistSetCurrentIndex(int index);
 int playlistGetScroll();        // current scroll offset
 int playlistGetMaxVisible();    // how many songs fit on screen
 
+// Swap two tracks in the playlist (for drag-to-reorder)
+void playlistSwapTracks(int index1, int index2);
+// Set scroll position directly (for slider dragging)
+void playlistSetScroll(int scroll);
 
 // Draw playlist UI
 void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font);

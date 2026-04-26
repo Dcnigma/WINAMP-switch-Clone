@@ -75,6 +75,7 @@ void controllerHandlePlayerControls()
     }
 
     if (down & HidNpadButton_X)
+        //uiNotifyButtonPress(UI_BTN_STOP);
         playerStop();
 
     if (down & HidNpadButton_StickRRight)

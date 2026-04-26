@@ -4,6 +4,7 @@
 #include "playlist.h"
 #include "filebrowser.h"
 #include "settings.h"
+#include "settings_state.h"
 #include "ui.h"
 #include "eq.h"
 
@@ -13,6 +14,7 @@
 
 extern bool autoEQEnabled;
 extern int  selectedBand;
+extern PlayerSettings g_settings;
 
 /* ============================================================
    COORDINATE MAPPING
@@ -44,7 +46,8 @@ extern int  selectedBand;
 /* ============================================================
    DRAG TRACKING
    A drag is a touch that moves without lifting.
-   Used for volume bar, pan slider, progress bar, EQ bands.
+   Used for volume bar, pan slider, progress bar, EQ bands,
+   playlist slider, and playlist reordering.
 ============================================================ */
 #define MAX_TOUCHES 10
 
@@ -54,6 +57,7 @@ struct TouchPoint {
     float startFbX, startFbY;
     bool  active;
     bool  moved;      // true once the finger has moved > DRAG_THRESHOLD px
+    int   draggedPlaylistIndex; // for playlist reordering
 };
 
 static HidTouchScreenState g_touchState;
@@ -125,21 +129,51 @@ static void handleProgressBar(float fbY)
     playerSeek(t * (float)playerGetTrackLength());
 }
 
+// Playlist slider: vertical scrollbar for playlist
+// The knob position is calculated based on scroll position
+static void handlePlaylistSlider(float fbX, float fbY)
+{
+    // Playlist slider coordinates from ui.cpp
+    const int trackX = 208;
+    const int trackY = 1020;
+    const int trackW = 326;
+    const int knobW = 103;
+    const int knobH = 30;
+
+    int totalTracks = playlistGetCount();
+    if (totalTracks <= 4) return; // No scrolling needed if 4 or fewer tracks
+
+    // The knob position is: t=1.0 → knob at right (scroll=0)
+    //                       t=0.0 → knob at left (scroll=max)
+    // So: t = 1.0 - (scroll / maxScroll)
+
+    // Convert touch position to t value (0.0 to 1.0)
+    int travel = trackW - knobW;
+    float t = (fbX - trackX) / (float)travel;  // USER FIX: fbX instead of fbY
+    t = clampf(t, 0.0f, 1.0f);
+
+    // Reverse: t=1.0 means scroll=0, t=0.0 means scroll=max
+    int maxScroll = totalTracks - 4;
+    int newScroll = (int)((1.0f - t) * maxScroll + 0.5f);
+    playlistSetScroll(newScroll);
+}
+
 // EQ band sliders — bands 1-10 are in eqBand2..eqBand11
-// Each rect is {730, Y, 340, 33}; knob moves left→right for cut→boost
+// Each rect is {730, Y, 340, 53}; knob moves left→right for cut→boost
 // Band value range is -12 .. +12 dB
+// USER IMPROVEMENT: Increased height from 33 to 53 for easier touch
 static const SDL_Rect g_eqBands[11] = {
-    {730,  90, 340, 33},  // [0] = preamp (band index used for setBand offset)
-    {730, 315, 340, 33},  // [1] = band 1
-    {730, 387, 340, 33},  // [2] = band 2
-    {730, 457, 340, 33},  // [3] = band 3
-    {730, 532, 340, 33},  // [4] = band 4
-    {730, 603, 340, 33},  // [5] = band 5
-    {730, 671, 340, 33},  // [6] = band 6
-    {730, 743, 340, 33},  // [7] = band 7
-    {730, 813, 340, 33},  // [8] = band 8
-    {730, 885, 340, 33},  // [9] = band 9
-    {730, 953, 340, 33},  // [10]= band 10
+    {730,  90, 340, 53},  // [0] = preamp
+    {730, 315, 340, 53},  // [1] = band 1
+    {730, 387, 340, 53},  // [2] = band 2
+    {730, 457, 340, 53},  // [3] = band 3
+    {730, 532, 340, 53},  // [4] = band 4
+    {730, 603, 340, 53},  // [5] = band 5
+    {730, 671, 340, 53},  // [6] = band 6
+    {730, 743, 340, 53},  // [7] = band 7
+    {730, 813, 340, 53},  // [8] = band 8
+    {730, 885, 340, 53},  // [9] = band 9
+    {730, 953, 340, 53},  // [10]= band 10
 };
 
 static void handleEQBand(int bandArrayIndex, float fbX)
@@ -155,13 +189,15 @@ static void handleEQBand(int bandArrayIndex, float fbX)
         g_equalizer.setBand(bandArrayIndex, db);
 }
 
+
+
 /* ============================================================
    PLAYLIST ROW HIT TESTING
    renderPlaylist draws 4 visible tracks in trackTitleArea region.
    From playlist.cpp: titleRect.x starts at 230, steps of 75.
    MAX_VISIBLE_TRACKS = 4, each column is 75px wide in FB-X.
 ============================================================ */
-static void handlePlaylistTap(float fbX, float fbY)
+static int getPlaylistIndexAtPosition(float fbX, float fbY)
 {
     // Each track column: x = 230 + (3-i)*75, width = 70
     // (reversed because drawn rotated)
@@ -181,11 +217,20 @@ static void handlePlaylistTap(float fbX, float fbY)
             int trackIdx = scroll + i;
             if (trackIdx < playlistGetCount())
             {
-                playlistSetCurrentIndex(trackIdx);
-                playerPlay(trackIdx);
+                return trackIdx;
             }
-            return;
         }
+    }
+    return -1;
+}
+
+static void handlePlaylistTap(float fbX, float fbY)
+{
+    int trackIdx = getPlaylistIndexAtPosition(fbX, fbY);
+    if (trackIdx >= 0)
+    {
+        playlistSetCurrentIndex(trackIdx);
+        playerPlay(trackIdx);
     }
 }
 
@@ -229,6 +274,7 @@ static bool handlePlayerTap(float fbX, float fbY)
     }
     if (rectContains(stopButton, fbX, fbY))
     {
+        uiNotifyButtonPress(UI_BTN_STOP);
         playerStop();
         return true;
     }
@@ -245,9 +291,9 @@ static bool handlePlayerTap(float fbX, float fbY)
         return true;
     }
 
-    // --- Shuffle / Repeat ---
-    const SDL_Rect shuffleButton = {1357, 642,  72, 182};
-    const SDL_Rect repeatButton  = {1357, 825,  72, 115};
+    // --- Shuffle/Repeat buttons ---
+    const SDL_Rect shuffleButton = {1357, 642, 72, 182};
+    const SDL_Rect repeatButton  = {1357, 825, 72, 110};
 
     if (rectContains(shuffleButton, fbX, fbY))
     {
@@ -282,7 +328,7 @@ static bool handlePlayerTap(float fbX, float fbY)
 
     if (rectContains(addPlaylist, fbX, fbY))
     {
-        fileBrowserOpen();
+        fileBrowserOpenadd();
         return true;
     }
     if (rectContains(rmPlaylist, fbX, fbY))
@@ -294,9 +340,9 @@ static bool handlePlayerTap(float fbX, float fbY)
 
     // --- Settings open ---
     // No dedicated button in the skin, but tapping the kbps/kHz area opens settings
-    const SDL_Rect kbpsInfo = {1639, 426, 57, 74};
-    const SDL_Rect kHzInfo  = {1639, 600, 57, 55};
-    if (rectContains(kbpsInfo, fbX, fbY) || rectContains(kHzInfo, fbX, fbY))
+    const SDL_Rect TopLeftSign = {1845, 0, 75, 75};
+
+    if (rectContains(TopLeftSign, fbX, fbY))
     {
         settingsOpen();
         return true;
@@ -309,6 +355,266 @@ static bool handlePlayerTap(float fbX, float fbY)
 }
 
 /* ============================================================
+   FILE BROWSER BUTTON TAPS
+   Coordinates from filebrowser.cpp
+============================================================ */
+static bool handleFileBrowserTap(float fbX, float fbY)
+{
+    // File browser layout constants (from filebrowser.cpp)
+    const int FBW = 1920;
+    const int FBH = 1080;
+
+    // Check which screen is active
+    if (fileBrowserIsMenu())
+    {
+        // ========== MENU SCREEN ==========
+        const int MENU_MARGIN_TOP = 800;
+        const int MENU_TITLE_H = 80;
+        const int MENU_ROW_H = 130;
+        const int MENU_GAP = 12;
+
+        int x = FBW - MENU_MARGIN_TOP;
+
+        // Skip title (drawn last, appears at top)
+        x += MENU_TITLE_H + MENU_GAP;
+
+        // Rows are drawn in reverse order:
+        // 1st drawn = "Add URL" (top of screen)
+        // 2nd drawn = "Add FILES" (middle)
+        // 3rd drawn = "A: SELECT B: CANCEL" hint (bottom)
+
+        // "Add URL" row (menuSel=1, top-most button)
+        x -= MENU_ROW_H;
+        SDL_Rect addUrlRow = {x, 20, MENU_ROW_H, FBH - 40};
+        x -= MENU_GAP;
+
+        // "Add FILES" row (menuSel=0, middle button)
+        x -= MENU_ROW_H;
+        SDL_Rect addFilesRow = {x, 20, MENU_ROW_H, FBH - 40};
+        x -= MENU_GAP;
+
+        // Hint row (bottom-most, not selectable)
+        x -= MENU_ROW_H;
+        SDL_Rect hintRow = {x, 20, MENU_ROW_H, FBH - 40};
+
+        // Check taps on rows
+        if (rectContains(addFilesRow, fbX, fbY))
+        {
+            fileBrowserTapRow(-1);  // -1 = open browse screen
+            return true;
+        }
+        if (rectContains(addUrlRow, fbX, fbY))
+        {
+            // "Add URL" - placeholder, do nothing for now
+            return true;
+        }
+
+        // Tap outside menu rows (but inside menu area) = cancel
+        // x is now below the hint row, so anything below x or above the title cancels
+        if (fbX < x || fbX > FBW - MENU_MARGIN_TOP + MENU_TITLE_H)
+        {
+            fileBrowserCancel();
+            return true;
+        }
+
+        return false;
+    }
+    else if (fileBrowserIsBrowse())
+    {
+        // ========== BROWSE SCREEN ==========
+        const int BR_MARGIN_TOP = 400;
+        const int BR_HDR_H = 80;
+        const int BR_ROW_H = 140;
+        const int BR_ROWS_MAX = 6;  // Maximum rows that can be displayed
+        const int BR_BTNS_H = 80;
+        const int BR_HINT_H = 60;
+        const int BR_GAP = 110;
+        const int BR_GAP2 = 10;
+
+        // Get actual number of items to determine visible rows
+        int itemCount = fileBrowserGetItemCount();
+        int visibleRows = (itemCount < BR_ROWS_MAX) ? itemCount : BR_ROWS_MAX;
+
+        int x = FBW - BR_MARGIN_TOP;
+
+        // Header with scroll buttons
+        x -= BR_HDR_H;
+
+        // Scroll up button [<]
+        const SDL_Rect scrollUpBtn = {x + (BR_HDR_H - 50)/2, FBH - 40 - 180, 50, 80};
+        if (rectContains(scrollUpBtn, fbX, fbY))
+        {
+            fileBrowserScrollPage(-1, 0);
+            return true;
+        }
+
+        // Scroll down button [>]
+        const SDL_Rect scrollDownBtn = {x + (BR_HDR_H - 50)/2, FBH - 40 - 80, 50, 80};
+        if (rectContains(scrollDownBtn, fbX, fbY))
+        {
+            fileBrowserScrollPage(+1, 0);
+            return true;
+        }
+
+        x -= BR_GAP;
+        x += BR_HDR_H;
+
+        // File/folder rows - drawn bottom-to-top, use ACTUAL visible rows
+        for (int vi = 0; vi < visibleRows; vi++)
+        {
+            x -= BR_ROW_H;
+            SDL_Rect rowRect = {x, 0, BR_ROW_H, FBH};
+
+            if (rectContains(rowRect, fbX, fbY))
+            {
+                // Reverse the index because rows are drawn from bottom to top
+                int reversedIndex = visibleRows - 1 - vi;
+
+                // Check if it's the add button (right side of row)
+                const int ADD_BTN_W = 70;
+                const int ADD_BTN_MARGIN = 10;
+                SDL_Rect addBtnRect = {
+                    x + (BR_ROW_H - 70)/2,
+                    FBH - ADD_BTN_W - ADD_BTN_MARGIN,
+                    70,
+                    ADD_BTN_W
+                };
+
+                if (rectContains(addBtnRect, fbX, fbY))
+                {
+                    // Add button tapped
+                    fileBrowserToggleAdd(reversedIndex);
+                    return true;
+                }
+                else
+                {
+                    // Row tapped - select/enter
+                    fileBrowserTapRow(reversedIndex);
+                    return true;
+                }
+            }
+        }
+
+        // Cancel/Done buttons
+        x -= BR_GAP2;
+        x -= BR_BTNS_H;
+        int half = FBH/2 - 10;
+
+        // Cancel button (left)
+        SDL_Rect cancelBtn = {x, 5, BR_BTNS_H, half};
+        if (rectContains(cancelBtn, fbX, fbY))
+        {
+            fileBrowserCancel();
+            return true;
+        }
+
+        // Done button (right)
+        SDL_Rect doneBtn = {x, FBH/2 + 5, BR_BTNS_H, half};
+        if (rectContains(doneBtn, fbX, fbY))
+        {
+            fileBrowserDone();
+            return true;
+        }
+
+        return false;
+    }
+
+    return false;
+}
+
+
+/* ============================================================
+   SETTINGS MENU BUTTON TAPS
+   Coordinates from settings.cpp
+============================================================ */
+static bool handleSettingsTap(float fbX, float fbY)
+{
+    // Settings layout constants (from settings.cpp)
+    const int FBW = 1920;
+    const int FBH = 1080;
+    const int S_MARGIN_TOP = 400;
+    const int S_TITLE_H = 80;
+    const int S_ROW_H = 160;
+    const int S_GAP = 8;
+    const int S_BTNS_H = 80;
+
+    int x = FBW - S_MARGIN_TOP;
+    x -= S_TITLE_H;
+
+    // Settings rows (from top to bottom on screen)
+    struct SettingRect {
+        int id;
+        int height;
+    };
+    SettingRect settings[] = {
+        {SETTING_CROSSFADE, S_ROW_H},
+        {SETTING_CROSSFADE_TIME, S_ROW_H},
+        {SETTING_REPLAYGAIN, S_ROW_H},
+        {SETTING_AUTOGAIN, S_ROW_H},
+    };
+
+    for (auto& setting : settings)
+    {
+        x -= (setting.height + S_GAP);
+        SDL_Rect rowRect = {x, 0, setting.height, FBH};
+
+        if (rectContains(rowRect, fbX, fbY))
+        {
+            // Handle different setting types
+            switch (setting.id)
+            {
+                case SETTING_CROSSFADE:
+                    g_settings.crossfadeEnabled = !g_settings.crossfadeEnabled;
+                    return true;
+
+                case SETTING_CROSSFADE_TIME:
+                    // For slider settings, check if tapping on slider area
+                    // Could add slider drag support here
+                    return true;
+
+                case SETTING_REPLAYGAIN:
+                    // Cycle through replay gain modes
+                    if (g_settings.replayGainMode == REPLAYGAIN_OFF)
+                        g_settings.replayGainMode = REPLAYGAIN_TRACK;
+                    else if (g_settings.replayGainMode == REPLAYGAIN_TRACK)
+                        g_settings.replayGainMode = REPLAYGAIN_ALBUM;
+                    else
+                        g_settings.replayGainMode = REPLAYGAIN_OFF;
+                    return true;
+
+                case SETTING_AUTOGAIN:
+                    g_settings.autoGainEnabled = !g_settings.autoGainEnabled;
+                    return true;
+            }
+        }
+    }
+
+    // Save Settings and Back buttons
+    x -= S_GAP;
+    x -= S_BTNS_H;
+    int half = FBH/2 - 10;
+
+    // Save Settings button (left)
+    SDL_Rect saveBtn = {x, 5, S_BTNS_H, half};
+    if (rectContains(saveBtn, fbX, fbY))
+    {
+        settingsSave();
+        settingsClose();
+        return true;
+    }
+
+    // Back button (right)
+    SDL_Rect backBtn = {x, FBH/2 + 5, S_BTNS_H, half};
+    if (rectContains(backBtn, fbX, fbY))
+    {
+        settingsClose();
+        return true;
+    }
+
+    return false;
+}
+
+/* ============================================================
    DRAG HANDLERS — called every frame a finger is held down
 ============================================================ */
 static void handlePlayerDrag(float fbX, float fbY, float startFbX, float startFbY)
@@ -316,6 +622,22 @@ static void handlePlayerDrag(float fbX, float fbY, float startFbX, float startFb
     const SDL_Rect volBar  = {1551, 421, 40, 264};
     const SDL_Rect panBar  = {1552, 698, 40, 145};
     const SDL_Rect progBar = {1467,  64, 61, 982};
+    const SDL_Rect playlistSlider = {45, 50, 70, 950};
+
+    // Playlist slider from ui.cpp drawPlaylistSlider
+    // Track: X=208, Y=1020, W=326, H=30
+    // Knob: 103x30, positioned within track based on scroll
+    // Create expanded hit area to catch touches on/near the knob
+    const int trackX = 208;
+    const int trackY = 1020;
+    const int trackW = 326;
+    const int trackH = 50;  // Expanded height for easier touch
+    SDL_Rect playlistSliderArea = {
+        trackX - 10,      // Expand left
+        trackY - 10,      // Expand top
+        trackW + 20,      // Expand width
+        trackH + 20       // Expand height
+    };
 
     // Determine which zone the drag started in
     if (rectContains(volBar, startFbX, startFbY))
@@ -333,6 +655,11 @@ static void handlePlayerDrag(float fbX, float fbY, float startFbX, float startFb
         handleProgressBar(fbY);
         return;
     }
+    if (rectContains(playlistSliderArea, startFbX, startFbY))
+    {
+        handlePlaylistSlider(fbX, fbY);  // Pass both coordinates
+        return;
+    }
 
     // EQ band sliders — check all 11
     for (int i = 0; i < 11; i++)
@@ -342,6 +669,134 @@ static void handlePlayerDrag(float fbX, float fbY, float startFbX, float startFb
             handleEQBand(i, fbX);
             return;
         }
+    }
+}
+
+static void handlePlaylistDrag(TouchPoint& touch, float fbX, float fbY)
+{
+    // If we haven't identified which track is being dragged yet
+    if (touch.draggedPlaylistIndex == -1)
+    {
+        touch.draggedPlaylistIndex = getPlaylistIndexAtPosition(touch.startFbX, touch.startFbY);
+        if (touch.draggedPlaylistIndex == -1)
+            return; // Not dragging a playlist item
+
+        // Select this song in the playlist for visual feedback
+        playlistSetCurrentIndex(touch.draggedPlaylistIndex);
+    }
+
+    // === FULL SCREEN DRAGGING ===
+    // Once a song is grabbed, the user can drag anywhere on screen
+    // We map the full screen height to playlist positions
+
+    const int FBW = 1920;
+    const int totalTracks = playlistGetCount();
+    if (totalTracks <= 1) return;  // Nothing to reorder
+
+    // Define the drag area - use most of the screen (portrait mode thinking)
+    // When Switch is held vertically, this is top to bottom
+    const float DRAG_AREA_START = 100.0f;   // Leave small margin at top
+    const float DRAG_AREA_END = 1900.0f;    // Leave small margin at bottom
+    const float DRAG_AREA_HEIGHT = DRAG_AREA_END - DRAG_AREA_START;
+
+    // Map current finger position to a virtual playlist position
+    // This position can be beyond the visible 4 songs
+    float normalizedPos = (fbX - DRAG_AREA_START) / DRAG_AREA_HEIGHT;
+    normalizedPos = clampf(normalizedPos, 0.0f, 1.0f);
+
+    // Convert to target track index (0 to totalTracks-1)
+    int targetIndex = (int)(normalizedPos * (totalTracks - 1) + 0.5f);
+    targetIndex = clampf(targetIndex, 0, totalTracks - 1);
+
+    // Update scroll position to keep the dragged song visible
+    // The dragged song should follow your finger
+    int scroll = playlistGetScroll();
+    const int MAX_VISIBLE = 4;
+
+    // If target is above visible area, scroll up
+    if (targetIndex < scroll)
+    {
+        playlistSetScroll(targetIndex);
+    }
+    // If target is below visible area, scroll down
+    else if (targetIndex >= scroll + MAX_VISIBLE)
+    {
+        playlistSetScroll(targetIndex - MAX_VISIBLE + 1);
+    }
+
+    // Swap songs to move the dragged song toward the target position
+    if (targetIndex != touch.draggedPlaylistIndex)
+    {
+        // Move one step at a time for smooth animation
+        if (targetIndex > touch.draggedPlaylistIndex)
+        {
+            // Moving down - swap with next song
+            playlistSwapTracks(touch.draggedPlaylistIndex, touch.draggedPlaylistIndex + 1);
+            touch.draggedPlaylistIndex++;
+        }
+        else
+        {
+            // Moving up - swap with previous song
+            playlistSwapTracks(touch.draggedPlaylistIndex, touch.draggedPlaylistIndex - 1);
+            touch.draggedPlaylistIndex--;
+        }
+
+        // Keep the dragged song selected for visual feedback
+        playlistSetCurrentIndex(touch.draggedPlaylistIndex);
+    }
+}
+
+static void handleSettingsDrag(float fbX, float fbY, float startFbX, float startFbY)
+{
+    // Settings slider drag support (for Crossfade Time slider)
+    const int FBW = 1920;
+    const int FBH = 1080;
+    const int S_MARGIN_TOP = 400;
+    const int S_TITLE_H = 80;
+    const int S_ROW_H = 160;
+    const int S_GAP = 8;
+    const int S_SLIDER_W = 400;
+    const int S_SLIDER_H = 50;
+
+    int x = FBW - S_MARGIN_TOP - S_TITLE_H;
+
+    // Crossfade row is first
+    x -= (S_ROW_H + S_GAP);
+    // Crossfade Time row is second
+    x -= (S_ROW_H + S_GAP);
+
+    // Calculate slider track position (matching sDrawSlider in settings.cpp)
+    int sliderFBY_centre = FBH / 2;
+    int trackFBY = sliderFBY_centre - S_SLIDER_W / 2;
+    int trackFBX = x + (S_ROW_H - S_SLIDER_H) / 2;
+
+    // Expanded hit area to include the knob
+    // Calculate where the knob currently is
+    float currentT = (g_settings.crossfadeSeconds - 0.5f) / (10.0f - 0.5f);
+    currentT = 1.0f - currentT;  // Reversed for display
+    int fillH = (int)(S_SLIDER_W * currentT);
+    int knobY = trackFBY + S_SLIDER_W - fillH - 8;
+
+    // Create an expanded hit area that includes the full slider track + knob area
+    // Make the X range wider to catch touches near the slider
+    SDL_Rect CrossfadesliderArea = {
+        trackFBX - 30,        // Expand left
+        trackFBY - 20,        // Expand up
+        S_SLIDER_H + 60,      // Expand width
+        S_SLIDER_W + 40       // Expand height
+    };
+    // Slider area for Crossfade Time (approximate)
+    // int sliderY = FBH - S_SLIDER_W - 30;
+    // SDL_Rect sliderArea = {x + 30, sliderY, S_ROW_H - 60, S_SLIDER_W };
+
+    if (rectContains(CrossfadesliderArea, startFbX, startFbY))
+    {
+        // Dragging the crossfade time slider
+        //float t = (fbY - sliderArea.y) / (float)sliderArea.h;
+        float t = (fbY - trackFBY) / (float)S_SLIDER_W;
+        t = clampf(t, 0.0f, 1.0f);
+        t = 1.0f - t;
+        g_settings.crossfadeSeconds = 0.5f + t * (10.0f - 0.5f);
     }
 }
 
@@ -363,6 +818,19 @@ void touchUpdate()
     // MAX_TOUCHES simultaneous finger positions
     hidGetTouchScreenStates(&g_touchState, 1);
     g_touchCount = (int)g_touchState.count;
+}
+
+int touchGetDraggedPlaylistIndex()
+{
+    // Check all active touches for a playlist drag
+    for (int i = 0; i < MAX_TOUCHES; i++)
+    {
+        if (g_touches[i].active && g_touches[i].moved && g_touches[i].draggedPlaylistIndex >= 0)
+        {
+            return g_touches[i].draggedPlaylistIndex;
+        }
+    }
+    return -1;  // No playlist item being dragged
 }
 
 bool touchHandleInput(bool hasFileBrowser, bool hasSettings)
@@ -406,7 +874,7 @@ bool touchHandleInput(bool hasFileBrowser, bool hasSettings)
                 {
                     g_touches[j] = { (int)raw.finger_id,
                                      fbX, fbY, fbX, fbY,
-                                     true, false };
+                                     true, false, -1 };
                     stillActive[j] = true;
                     break;
                 }
@@ -427,13 +895,31 @@ bool touchHandleInput(bool hasFileBrowser, bool hasSettings)
             // Finger still down — handle ongoing drags
             if (g_touches[j].moved)
             {
-                // Only the player screen has draggable sliders
-                if (!hasFileBrowser && !hasSettings)
+                if (hasFileBrowser)
                 {
+                    // No drag support in file browser currently
+                }
+                else if (hasSettings)
+                {
+                    // Settings slider drag
+                    handleSettingsDrag(g_touches[j].fbX,
+                                     g_touches[j].fbY,
+                                     g_touches[j].startFbX,
+                                     g_touches[j].startFbY);
+                    consumed = true;
+                }
+                else
+                {
+                    // Player screen drags
                     handlePlayerDrag(g_touches[j].fbX,
                                      g_touches[j].fbY,
                                      g_touches[j].startFbX,
                                      g_touches[j].startFbY);
+
+                    // Check for playlist reordering drag
+                    handlePlaylistDrag(g_touches[j],
+                                      g_touches[j].fbX,
+                                      g_touches[j].fbY);
                     consumed = true;
                 }
             }
@@ -452,33 +938,11 @@ bool touchHandleInput(bool hasFileBrowser, bool hasSettings)
 
                 if (hasFileBrowser)
                 {
-                    // Filebrowser scroll arrows — ^ and v buttons
-                    // These sit in the "// SELECT FILES" strip on the right.
-                    // Their rects from filebrowser render: ~{HDR_X, sbx..sbyUp/Dn}
-                    // We expose fileBrowserScrollPage() for exactly this purpose.
-                    // Rough touch zones for the two scroll buttons:
-                    const SDL_Rect scrollUp   = {1740, 650, 72, 72};
-                    const SDL_Rect scrollDown = {1740, 740, 72, 72};
-
-                    if (rectContains(scrollUp, tx, ty))
-                    {
-                        fileBrowserScrollPage(-1, 0);
-                        consumed = true;
-                    }
-                    else if (rectContains(scrollDown, tx, ty))
-                    {
-                        fileBrowserScrollPage(+1, 0);
-                        consumed = true;
-                    }
-                    // All other taps in filebrowser are handled by
-                    // fileBrowserUpdate() via controller-style input.
-                    // TODO: when full touch nav is added, dispatch row taps here.
+                    consumed = handleFileBrowserTap(tx, ty);
                 }
                 else if (hasSettings)
                 {
-                    // Settings taps — for now just close on tap outside
-                    // Full row-tap support can be added later similarly to
-                    // handlePlaylistTap() once button rects are exported.
+                    consumed = handleSettingsTap(tx, ty);
                 }
                 else
                 {

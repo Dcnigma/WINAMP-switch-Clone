@@ -494,7 +494,7 @@ static void stopPlaybackInternal()
     g_crossfadeProgress  = 0.0f;
     samplesPlayedNext    = 0;
     g_preloadAttempted   = false;
-
+    
     closeNextDecoderAll();
     closeCurrentDecoder();
 
@@ -611,6 +611,7 @@ void playerPlay(int index)
 
 void playerStop()
 {
+
     stopPlaybackInternal();
     spectrumReset();
     g_shuffleHistory.clear();
@@ -1024,6 +1025,7 @@ void playerUpdate()
 /* ---------------------------------------------------- */
 const PlayerState* playerGetState()          { return &g_state; }
 bool               playerIsPlaying()         { return g_state.playing; }
+//bool               playerIsStopped()         { return g_playbackState == STATE_STOPPED ; }
 bool               playerIsPaused()          { return g_state.playing && g_state.paused; }
 int                playerGetCurrentTrackIndex() { return g_state.trackIndex; }
 int                playerGetElapsedSeconds() { return g_state.elapsedSeconds; }

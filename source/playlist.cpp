@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include "filebrowser.h"
 #include "player.h"
+#include "touchscreen.h"
 
 static std::vector<std::string> playlist;
 
@@ -87,6 +88,41 @@ void playlistScrollDown()
         playlistScroll = currentIndex - MAX_VISIBLE_TRACKS + 1;
 }
 
+void playlistSwapTracks(int index1, int index2)
+{
+    if (index1 < 0 || index2 < 0) return;
+    if (index1 >= playlistGetCount() || index2 >= playlistGetCount()) return;
+    if (index1 == index2) return;
+
+    // Get the currently playing track index from the player
+    int playingIndex = playerGetCurrentTrackIndex();
+
+    // Swap the playlist entries
+    std::string temp = playlist[index1];
+    playlist[index1] = playlist[index2];
+    playlist[index2] = temp;
+
+    // Update current selected index if needed
+    if (currentIndex == index1)
+        currentIndex = index2;
+    else if (currentIndex == index2)
+        currentIndex = index1;
+
+    // Update the player's track index if we moved the currently playing song
+    if (playingIndex == index1)
+        playerPlay(index2);  // Update player to new position
+    else if (playingIndex == index2)
+        playerPlay(index1);  // Update player to new position
+}
+
+void playlistSetScroll(int scroll)
+{
+    playlistScroll = scroll;
+    if (playlistScroll < 0) playlistScroll = 0;
+    int maxScroll = playlistGetCount() - MAX_VISIBLE_TRACKS;
+    if (maxScroll < 0) maxScroll = 0;
+    if (playlistScroll > maxScroll) playlistScroll = maxScroll;
+}
 
 
 /* ---------- Clear ---------- */

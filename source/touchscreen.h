@@ -1,16 +1,33 @@
-#pragma once
-#include <switch.h>
+#ifndef TOUCHSCREEN_H
+#define TOUCHSCREEN_H
+
 #include <stdbool.h>
 
-// Call once at startup after hidInitialize
+/* ============================================================
+   TOUCHSCREEN INPUT API
+   
+   Provides touch input handling for the Switch music player.
+   Supports:
+   - Tap detection for buttons and UI elements
+   - Drag support for sliders (volume, pan, progress, EQ, playlist scroll)
+   - Playlist reordering via drag-and-drop
+   - Full touchscreen support for file browser and settings menus
+============================================================ */
+
+// Initialize touchscreen system (called once at startup)
 void touchInit();
 
-// Call every frame before processing touch — reads raw touch state
+// Update touch state (called every frame to read new touch data)
 void touchUpdate();
 
-// Call every frame in the same exclusive-focus chain as controller input.
-// Pass which overlay is currently active so touch is routed correctly.
-//   hasFileBrowser : fileBrowserIsActive()
-//   hasSettings    : settingsIsOpen()
-// Returns true if a touch event was consumed this frame.
+// Process touch input and dispatch to appropriate handlers
+// hasFileBrowser: true if file browser overlay is active
+// hasSettings: true if settings overlay is active
+// Returns: true if touch input was consumed/handled
 bool touchHandleInput(bool hasFileBrowser, bool hasSettings);
+
+// Get the index of the currently dragged playlist item (-1 if none)
+// Used for visual feedback (highlighting the dragged song)
+int touchGetDraggedPlaylistIndex();
+
+#endif // TOUCHSCREEN_H

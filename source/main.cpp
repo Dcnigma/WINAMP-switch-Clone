@@ -105,7 +105,7 @@ int main()
     while (appletMainLoop())
     {
         updateStayAwakeLogic();
-        //New controller inputs
+        //New controller inputs 
         controllerUpdate();
         PadState* pad = controllerGetPad();
         u64 down = padGetButtonsDown(pad);

@@ -71,7 +71,7 @@ bool settingsIsOpen(){ return g_settingsOpen; }
 /* ============================================================
    SETTINGS SAVE
 ============================================================ */
-static void settingsSave()
+void settingsSave()
 {
     // Make sure the directory exists
     mkdir("sdmc:/config",        0777);
