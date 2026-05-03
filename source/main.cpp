@@ -39,6 +39,19 @@ static ScrubState g_scrub;
 
 void updateStayAwakeLogic()
 {
+    // Check if stay awake is enabled in settings
+    if (!g_settings.stayAwakeEnabled)
+    {
+        // Disabled - ensure auto-sleep is active
+        if (stayAwakeActive)
+        {
+            appletSetIdleTimeDetectionExtension((AppletIdleTimeDetectionExtension)0);
+            stayAwakeActive = false;
+        }
+        return;
+    }
+
+    // Stay awake is enabled - normal logic
     u64 now = svcGetSystemTick();
 
     if (playerIsPlaying())
@@ -105,7 +118,7 @@ int main()
     while (appletMainLoop())
     {
         updateStayAwakeLogic();
-        //New controller inputs 
+        //New controller inputs
         controllerUpdate();
         PadState* pad = controllerGetPad();
         u64 down = padGetButtonsDown(pad);
@@ -192,11 +205,40 @@ int main()
     flacStopBackgroundScanner();
     oggStopBackgroundScanner();
     wavStopBackgroundScanner();
+
+    // Stop playback and shutdown player properly
+    playerShutdown();
     playerStop();
+
+    // Restore normal sleep behavior
+    if (stayAwakeActive)
+    {
+        appletSetIdleTimeDetectionExtension((AppletIdleTimeDetectionExtension)0);
+        stayAwakeActive = false;
+    }
+
+    // Clean up SDL resources
+    if (skin) SDL_DestroyTexture(skin);
+    if (texProgIndicator) SDL_DestroyTexture(texProgIndicator);
+    if (texVolume) SDL_DestroyTexture(texVolume);
+    if (texPan) SDL_DestroyTexture(texPan);
+    if (texPlaylistKnob) SDL_DestroyTexture(texPlaylistKnob);
+    if (texCbuttons) SDL_DestroyTexture(texCbuttons);
+    if (texSHUFREP) SDL_DestroyTexture(texSHUFREP);
+    if (texEQMAIN) SDL_DestroyTexture(texEQMAIN);
+
+    if (font) TTF_CloseFont(font);
+    if (fontBig) TTF_CloseFont(fontBig);
+
+
+
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+
     IMG_Quit();
     TTF_Quit();
     SDL_Quit();
     romfsExit();
+
+    return 0;
 }

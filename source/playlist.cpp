@@ -9,7 +9,6 @@
 #include <stdio.h>
 #include "filebrowser.h"
 #include "player.h"
-#include "touchscreen.h"
 
 static std::vector<std::string> playlist;
 
@@ -45,6 +44,32 @@ int playlistGetCurrentIndex()
     return currentIndex;
 }
 
+/* ---------- Find playing song by file path ---------- */
+int playlistGetPlayingIndex()
+{
+    // Get the file path of what's currently playing
+    const char* playingPath = playerGetCurrentTrackPath();
+    
+    // If nothing is playing, return -1
+    if (!playingPath)
+        return -1;
+    
+    // Search through the playlist to find where that file is NOW
+    // This works even if:
+    // - Files were added before it (shifting its index)
+    // - It was drag-and-dropped to a new position
+    // - The playlist was reordered
+    for (int i = 0; i < (int)playlist.size(); i++)
+    {
+        if (playlist[i] == playingPath)
+            return i;  // Found it at this position!
+    }
+    
+    // File not found in playlist
+    // This can happen if the playing song was removed from the playlist
+    return -1;
+}
+
 
 
 /* ---------- Add / Get ---------- */
@@ -52,6 +77,7 @@ void playlistAdd(const char* path)
 {
     if (!path) return;
     playlist.push_back(path);
+    // Adding to end doesn't affect player's index - no update needed
 }
 
 int playlistGetCount()
@@ -94,7 +120,7 @@ void playlistSwapTracks(int index1, int index2)
     if (index1 >= playlistGetCount() || index2 >= playlistGetCount()) return;
     if (index1 == index2) return;
 
-    // Get the currently playing track index from the player
+    // Get the currently playing track index BEFORE swap
     int playingIndex = playerGetCurrentTrackIndex();
 
     // Swap the playlist entries
@@ -102,17 +128,18 @@ void playlistSwapTracks(int index1, int index2)
     playlist[index1] = playlist[index2];
     playlist[index2] = temp;
 
-    // Update current selected index if needed
+    // Update currentIndex (the selected/highlighted song)
     if (currentIndex == index1)
         currentIndex = index2;
     else if (currentIndex == index2)
         currentIndex = index1;
-
-    // Update the player's track index if we moved the currently playing song
+    
+    // Update player's track index if the playing song moved
+    // This keeps the player pointing to the correct song
     if (playingIndex == index1)
-        playerPlay(index2);  // Update player to new position
+        playerUpdateTrackIndex(index2);
     else if (playingIndex == index2)
-        playerPlay(index1);  // Update player to new position
+        playerUpdateTrackIndex(index1);
 }
 
 void playlistSetScroll(int scroll)
@@ -157,7 +184,9 @@ void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font)
 
     int visible = (count < MAX_VISIBLE_TRACKS) ? count : MAX_VISIBLE_TRACKS;
 
-    int playingIndex = playerGetCurrentTrackIndex();
+    // Get the ACTUAL position of the playing song in the current playlist
+    // This finds it by file path, so it works even after drag-and-drop or file additions
+    int playingIndex = playlistGetPlayingIndex();
     int elapsed = playerGetElapsedSeconds();
 
     for (int i = 0; i < visible; i++)

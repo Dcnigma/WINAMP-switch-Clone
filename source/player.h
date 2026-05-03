@@ -10,15 +10,23 @@ void playerInit();
 void playerPlay(int index);
 void playerStop();
 void playerStartCrossfade();
+void playerShutdown();
 //void playerNext();
 void playerPrev();
 bool playerIsPlaying();
 void playerUpdate();
-//void applyReplayGainFromMetadata();
 void applyReplayGainFromMetadata(const Mp3MetadataEntry& meta);
-//void applyReplayGainFromMetadata(const Mp3MetadataEntry& meta);
-//bool playerIsPlaying();
+
+const char* playerGetCurrentTrackPath();
+void playerUpdateTrackIndex(int newIndex);
+
 bool playerIsPaused();
+
+int  playerGetCurrentTrackIndex();
+int  playerGetElapsedSeconds();
+int  playerGetTrackLength();
+const char* playerGetCurrentTrackPath();  // <-- Add this
+
 
 bool playerIsShuffleEnabled();
 bool playerIsRepeatEnabled();
@@ -57,6 +65,11 @@ int playerGetCurrentTrackIndex();
 int playerGetElapsedSeconds();
 int playerGetTrackLength();
 int playlistGetCurrentIndex();
+void playerUpdateTrackIndex(int newIndex);
+// Get the file path of the currently playing track
+// Returns nullptr if nothing is playing
+
+
 
 //int  playerGetElapsedSeconds();
 //int  playerGetTrackLength();

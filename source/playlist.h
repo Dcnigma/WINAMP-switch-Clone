@@ -17,10 +17,14 @@ void playlistSwapTracks(int index1, int index2);
 // Set scroll position directly (for slider dragging)
 void playlistSetScroll(int scroll);
 
+// Get the actual current position of the playing song
+// (searches by file path, so it works even after drag-and-drop or additions)
+int playlistGetPlayingIndex();
+
 // Draw playlist UI
 void renderPlaylist(SDL_Renderer* renderer, TTF_Font* font);
 
-// Add a song to playlist (full path)
+// Add a song to playlist (full path) - always adds to END
 void playlistAdd(const char* path);
 
 // Get track count

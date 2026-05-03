@@ -537,59 +537,123 @@ static bool handleSettingsTap(float fbX, float fbY)
     const int S_ROW_H = 160;
     const int S_GAP = 8;
     const int S_BTNS_H = 80;
+    const int S_HDR_H = 80;  // For page nav buttons
 
     int x = FBW - S_MARGIN_TOP;
     x -= S_TITLE_H;
-
-    // Settings rows (from top to bottom on screen)
-    struct SettingRect {
-        int id;
-        int height;
-    };
-    SettingRect settings[] = {
-        {SETTING_CROSSFADE, S_ROW_H},
-        {SETTING_CROSSFADE_TIME, S_ROW_H},
-        {SETTING_REPLAYGAIN, S_ROW_H},
-        {SETTING_AUTOGAIN, S_ROW_H},
-    };
-
-    for (auto& setting : settings)
+    
+    // Page navigation buttons (same as file browser style)
+    // [<] button - previous page
+    SDL_Rect prevPageBtn = {x + (S_HDR_H - 50)/2, FBH - 40 - 180, 50, 80};
+    if (rectContains(prevPageBtn, fbX, fbY))
     {
-        x -= (setting.height + S_GAP);
-        SDL_Rect rowRect = {x, 0, setting.height, FBH};
+        settingsPrevPage();  // We'll need to add this function
+        return true;
+    }
+    
+    // [>] button - next page
+    SDL_Rect nextPageBtn = {x + (S_HDR_H - 50)/2, FBH - 40 - 80, 50, 80};
+    if (rectContains(nextPageBtn, fbX, fbY))
+    {
+        settingsNextPage();  // We'll need to add this function
+        return true;
+    }
 
-        if (rectContains(rowRect, fbX, fbY))
+    // Determine which page we're on and what settings to show
+    int currentPage = settingsGetCurrentPage();
+    
+    if (currentPage == 0)  // Page 1
+    {
+        // Page 1 Settings
+        struct SettingRect {
+            int id;
+            int height;
+        };
+        SettingRect settings[] = {
+            {SETTING_CROSSFADE, S_ROW_H},
+            {SETTING_CROSSFADE_TIME, S_ROW_H},
+            {SETTING_REPLAYGAIN, S_ROW_H},
+            {SETTING_AUTOGAIN, S_ROW_H},
+        };
+
+        for (auto& setting : settings)
         {
-            // Handle different setting types
-            switch (setting.id)
+            x -= (setting.height + S_GAP);
+            SDL_Rect rowRect = {x, 0, setting.height, FBH};
+
+            if (rectContains(rowRect, fbX, fbY))
             {
-                case SETTING_CROSSFADE:
-                    g_settings.crossfadeEnabled = !g_settings.crossfadeEnabled;
-                    return true;
+                // Handle different setting types
+                switch (setting.id)
+                {
+                    case SETTING_CROSSFADE:
+                        g_settings.crossfadeEnabled = !g_settings.crossfadeEnabled;
+                        return true;
 
-                case SETTING_CROSSFADE_TIME:
-                    // For slider settings, check if tapping on slider area
-                    // Could add slider drag support here
-                    return true;
+                    case SETTING_CROSSFADE_TIME:
+                        // Slider handled in drag handler
+                        return true;
 
-                case SETTING_REPLAYGAIN:
-                    // Cycle through replay gain modes
-                    if (g_settings.replayGainMode == REPLAYGAIN_OFF)
-                        g_settings.replayGainMode = REPLAYGAIN_TRACK;
-                    else if (g_settings.replayGainMode == REPLAYGAIN_TRACK)
-                        g_settings.replayGainMode = REPLAYGAIN_ALBUM;
-                    else
-                        g_settings.replayGainMode = REPLAYGAIN_OFF;
-                    return true;
+                    case SETTING_REPLAYGAIN:
+                        // Cycle through replay gain modes
+                        if (g_settings.replayGainMode == REPLAYGAIN_OFF)
+                            g_settings.replayGainMode = REPLAYGAIN_TRACK;
+                        else if (g_settings.replayGainMode == REPLAYGAIN_TRACK)
+                            g_settings.replayGainMode = REPLAYGAIN_ALBUM;
+                        else
+                            g_settings.replayGainMode = REPLAYGAIN_OFF;
+                        return true;
 
-                case SETTING_AUTOGAIN:
-                    g_settings.autoGainEnabled = !g_settings.autoGainEnabled;
-                    return true;
+                    case SETTING_AUTOGAIN:
+                        g_settings.autoGainEnabled = !g_settings.autoGainEnabled;
+                        return true;
+                }
+            }
+        }
+    }
+    else if (currentPage == 1)  // Page 2
+    {
+        // Page 2 Settings
+        struct SettingRect {
+            int id;
+            int height;
+        };
+        SettingRect settings[] = {
+            {SETTING_TOUCH_SENSITIVITY, S_ROW_H},
+            {SETTING_TOUCH_SPEED_LIMIT, S_ROW_H},
+            {SETTING_STAY_AWAKE, S_ROW_H},
+        };
+
+        for (auto& setting : settings)
+        {
+            x -= (setting.height + S_GAP);
+            SDL_Rect rowRect = {x, 0, setting.height, FBH};
+
+            if (rectContains(rowRect, fbX, fbY))
+            {
+                // Handle different setting types
+                switch (setting.id)
+                {
+                    case SETTING_TOUCH_SENSITIVITY:
+                        // Slider handled in drag handler
+                        return true;
+
+                    case SETTING_TOUCH_SPEED_LIMIT:
+                        // Increment speed limit on tap
+                        g_settings.touchSpeedLimit++;
+                        if (g_settings.touchSpeedLimit > 10)
+                            g_settings.touchSpeedLimit = 1;
+                        return true;
+
+                    case SETTING_STAY_AWAKE:
+                        g_settings.stayAwakeEnabled = !g_settings.stayAwakeEnabled;
+                        return true;
+                }
             }
         }
     }
 
-    // Save Settings and Back buttons
+    // Save Settings and Back buttons (same on all pages)
     x -= S_GAP;
     x -= S_BTNS_H;
     int half = FBH/2 - 10;
@@ -680,75 +744,80 @@ static void handlePlaylistDrag(TouchPoint& touch, float fbX, float fbY)
         touch.draggedPlaylistIndex = getPlaylistIndexAtPosition(touch.startFbX, touch.startFbY);
         if (touch.draggedPlaylistIndex == -1)
             return; // Not dragging a playlist item
-
+        
         // Select this song in the playlist for visual feedback
         playlistSetCurrentIndex(touch.draggedPlaylistIndex);
     }
 
-    // === FULL SCREEN DRAGGING ===
-    // Once a song is grabbed, the user can drag anywhere on screen
-    // We map the full screen height to playlist positions
-
-    const int FBW = 1920;
     const int totalTracks = playlistGetCount();
     if (totalTracks <= 1) return;  // Nothing to reorder
-
-    // Define the drag area - use most of the screen (portrait mode thinking)
-    // When Switch is held vertically, this is top to bottom
-    const float DRAG_AREA_START = 100.0f;   // Leave small margin at top
-    const float DRAG_AREA_END = 1900.0f;    // Leave small margin at bottom
-    const float DRAG_AREA_HEIGHT = DRAG_AREA_END - DRAG_AREA_START;
-
-    // Map current finger position to a virtual playlist position
-    // This position can be beyond the visible 4 songs
-    float normalizedPos = (fbX - DRAG_AREA_START) / DRAG_AREA_HEIGHT;
-    normalizedPos = clampf(normalizedPos, 0.0f, 1.0f);
-
-    // Convert to target track index (0 to totalTracks-1)
-    int targetIndex = (int)(normalizedPos * (totalTracks - 1) + 0.5f);
+    
+    // === DISTANCE-BASED DRAGGING WITH CONTROLLED SPEED ===
+    // Calculate how far finger moved from the current dragged position
+    // (not from original grab point - that's key for smooth control)
+    
+    float currentPos = fbX;
+    float draggedSongPos = touch.startFbX;  // Where we originally grabbed
+    
+    // Calculate distance from current position to where song should be
+    float dragDistance = currentPos - draggedSongPos;
+    
+    // Use sensitivity from settings (default 45.0)
+    const float PIXELS_PER_SONG = g_settings.touchSensitivity;
+    
+    // How many positions should we be from the original grab point?
+    int desiredMoveSteps = (int)(dragDistance / PIXELS_PER_SONG);
+    
+    // Calculate where the song should be now
+    // Start from where we grabbed it, add the movement
+    int originalGrabIndex = getPlaylistIndexAtPosition(touch.startFbX, touch.startFbY);
+    if (originalGrabIndex == -1) originalGrabIndex = touch.draggedPlaylistIndex;
+    
+    // Target is: where we grabbed + how far we've dragged
+    int targetIndex = originalGrabIndex + desiredMoveSteps;
+    
+    // Clamp to valid range
     targetIndex = clampf(targetIndex, 0, totalTracks - 1);
-
-    // Update scroll position to keep the dragged song visible
-    // The dragged song should follow your finger
-    int scroll = playlistGetScroll();
-    const int MAX_VISIBLE = 4;
-
-    // If target is above visible area, scroll up
-    if (targetIndex < scroll)
+    
+    // === CONTROLLED MOVEMENT ===
+    // Use speed limit from settings (default 3)
+    const int MAX_SWAPS_PER_FRAME = g_settings.touchSpeedLimit;
+    int swaps = 0;
+    
+    while (targetIndex != touch.draggedPlaylistIndex && swaps < MAX_SWAPS_PER_FRAME)
     {
-        playlistSetScroll(targetIndex);
-    }
-    // If target is below visible area, scroll down
-    else if (targetIndex >= scroll + MAX_VISIBLE)
-    {
-        playlistSetScroll(targetIndex - MAX_VISIBLE + 1);
-    }
-
-    // Swap songs to move the dragged song toward the target position
-    if (targetIndex != touch.draggedPlaylistIndex)
-    {
-        // Move one step at a time for smooth animation
         if (targetIndex > touch.draggedPlaylistIndex)
         {
-            // Moving down - swap with next song
+            // Moving down
             playlistSwapTracks(touch.draggedPlaylistIndex, touch.draggedPlaylistIndex + 1);
             touch.draggedPlaylistIndex++;
         }
         else
         {
-            // Moving up - swap with previous song
+            // Moving up
             playlistSwapTracks(touch.draggedPlaylistIndex, touch.draggedPlaylistIndex - 1);
             touch.draggedPlaylistIndex--;
         }
-
-        // Keep the dragged song selected for visual feedback
-        playlistSetCurrentIndex(touch.draggedPlaylistIndex);
+        swaps++;
     }
+    
+    // Update scroll position to keep the dragged song visible
+    int scroll = playlistGetScroll();
+    const int MAX_VISIBLE = 4;
+    
+    if (touch.draggedPlaylistIndex < scroll)
+        playlistSetScroll(touch.draggedPlaylistIndex);
+    else if (touch.draggedPlaylistIndex >= scroll + MAX_VISIBLE)
+        playlistSetScroll(touch.draggedPlaylistIndex - MAX_VISIBLE + 1);
+    
+    // Keep the dragged song selected for visual feedback
+    if (swaps > 0)
+        playlistSetCurrentIndex(touch.draggedPlaylistIndex);
 }
 
 static void handleSettingsDrag(float fbX, float fbY, float startFbX, float startFbY)
 {
-    // Settings slider drag support (for Crossfade Time slider)
+    // Settings slider drag support
     const int FBW = 1920;
     const int FBH = 1080;
     const int S_MARGIN_TOP = 400;
@@ -758,45 +827,65 @@ static void handleSettingsDrag(float fbX, float fbY, float startFbX, float start
     const int S_SLIDER_W = 400;
     const int S_SLIDER_H = 50;
 
+    int currentPage = settingsGetCurrentPage();
     int x = FBW - S_MARGIN_TOP - S_TITLE_H;
 
-    // Crossfade row is first
-    x -= (S_ROW_H + S_GAP);
-    // Crossfade Time row is second
-    x -= (S_ROW_H + S_GAP);
-
-    // Calculate slider track position (matching sDrawSlider in settings.cpp)
-    int sliderFBY_centre = FBH / 2;
-    int trackFBY = sliderFBY_centre - S_SLIDER_W / 2;
-    int trackFBX = x + (S_ROW_H - S_SLIDER_H) / 2;
-
-    // Expanded hit area to include the knob
-    // Calculate where the knob currently is
-    float currentT = (g_settings.crossfadeSeconds - 0.5f) / (10.0f - 0.5f);
-    currentT = 1.0f - currentT;  // Reversed for display
-    int fillH = (int)(S_SLIDER_W * currentT);
-    int knobY = trackFBY + S_SLIDER_W - fillH - 8;
-
-    // Create an expanded hit area that includes the full slider track + knob area
-    // Make the X range wider to catch touches near the slider
-    SDL_Rect CrossfadesliderArea = {
-        trackFBX - 30,        // Expand left
-        trackFBY - 20,        // Expand up
-        S_SLIDER_H + 60,      // Expand width
-        S_SLIDER_W + 40       // Expand height
-    };
-    // Slider area for Crossfade Time (approximate)
-    // int sliderY = FBH - S_SLIDER_W - 30;
-    // SDL_Rect sliderArea = {x + 30, sliderY, S_ROW_H - 60, S_SLIDER_W };
-
-    if (rectContains(CrossfadesliderArea, startFbX, startFbY))
+    if (currentPage == 0)  // Page 1
     {
-        // Dragging the crossfade time slider
-        //float t = (fbY - sliderArea.y) / (float)sliderArea.h;
-        float t = (fbY - trackFBY) / (float)S_SLIDER_W;
-        t = clampf(t, 0.0f, 1.0f);
-        t = 1.0f - t;
-        g_settings.crossfadeSeconds = 0.5f + t * (10.0f - 0.5f);
+        // Skip Crossfade row (no slider)
+        x -= (S_ROW_H + S_GAP);
+        
+        // Crossfade Time slider (second row on Page 1)
+        x -= (S_ROW_H + S_GAP);
+        
+        // Calculate slider track position (matching sDrawSlider in settings.cpp)
+        int sliderFBY_centre = FBH / 2;
+        int trackFBY = sliderFBY_centre - S_SLIDER_W / 2;
+        int trackFBX = x + (S_ROW_H - S_SLIDER_H) / 2;
+
+        // Create hit area for crossfade slider
+        SDL_Rect crossfadeSliderArea = {
+            trackFBX - 30,        // Expand left
+            trackFBY - 20,        // Expand up
+            S_SLIDER_H + 60,      // Expand width
+            S_SLIDER_W + 40       // Expand height
+        };
+
+        if (rectContains(crossfadeSliderArea, startFbX, startFbY))
+        {
+            // Dragging the crossfade time slider
+            float t = (fbY - trackFBY) / (float)S_SLIDER_W;
+            t = clampf(t, 0.0f, 1.0f);
+            t = 1.0f - t;  // Reversed for display
+            g_settings.crossfadeSeconds = 0.5f + t * (10.0f - 0.5f);
+        }
+    }
+    else if (currentPage == 1)  // Page 2
+    {
+        // Touch Sensitivity slider (first row on Page 2)
+        x -= (S_ROW_H + S_GAP);
+        
+        // Calculate slider track position
+        int sliderFBY_centre = FBH / 2;
+        int trackFBY = sliderFBY_centre - S_SLIDER_W / 2;
+        int trackFBX = x + (S_ROW_H - S_SLIDER_H) / 2;
+
+        // Create hit area for touch sensitivity slider
+        SDL_Rect sensitivitySliderArea = {
+            trackFBX - 30,
+            trackFBY - 20,
+            S_SLIDER_H + 60,
+            S_SLIDER_W + 40
+        };
+
+        if (rectContains(sensitivitySliderArea, startFbX, startFbY))
+        {
+            // Dragging the touch sensitivity slider
+            float t = (fbY - trackFBY) / (float)S_SLIDER_W;
+            t = clampf(t, 0.0f, 1.0f);
+            t = 1.0f - t;  // Reversed for display
+            g_settings.touchSensitivity = 20.0f + t * (80.0f - 20.0f);
+        }
     }
 }
 

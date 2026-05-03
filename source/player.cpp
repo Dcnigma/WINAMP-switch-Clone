@@ -1030,3 +1030,20 @@ bool               playerIsPaused()          { return g_state.playing && g_state
 int                playerGetCurrentTrackIndex() { return g_state.trackIndex; }
 int                playerGetElapsedSeconds() { return g_state.elapsedSeconds; }
 int                playerGetTrackLength()    { return g_state.durationSeconds; }
+
+// Get the file path of the currently playing track
+// Returns nullptr if nothing is playing
+const char*        playerGetCurrentTrackPath()
+{
+    if (g_state.trackIndex < 0)
+        return nullptr;
+    return playlistGetTrack(g_state.trackIndex);
+}
+
+// Update the player's track index when the playlist changes
+// This is called when songs are added, removed, or reordered
+// It does NOT restart playback - just updates the index
+void playerUpdateTrackIndex(int newIndex)
+{
+    g_state.trackIndex = newIndex;
+}
