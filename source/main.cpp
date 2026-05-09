@@ -112,7 +112,12 @@ int main()
     mp3AddToPlaylist("romfs:/song.mp3");
     playlistScroll = 0;
 
+
     controllerInit();
+
+    // Tell the applet we want to handle our own exit/focus events.
+    // Without this, sphaira closing your app can leave threads running.
+    appletSetFocusHandlingMode(AppletFocusHandlingMode_NoSuspend);
 
 
     while (appletMainLoop())
@@ -201,43 +206,59 @@ int main()
         SDL_RenderPresent(renderer);
     }
 
+    // -------------------------------------------------------
+    // SHUTDOWN - Order matters! Stop in reverse init order.
+    //
+    // IMPORTANT: We deliberately do NOT call SDL_Quit() here.
+    // On Switch under sphaira/HBL, SDL_Quit() triggers an
+    // internal bsdsocket cleanup that null-dereferences when
+    // the socket was already partially torn down by the OS.
+    // The OS will clean up remaining resources when the process
+    // exits. Skipping SDL_Quit() is safe and prevents the crash.
+    // -------------------------------------------------------
+
+    // 1. Stop all background scanner threads first
     mp3StopBackgroundScanner();
     flacStopBackgroundScanner();
     oggStopBackgroundScanner();
     wavStopBackgroundScanner();
 
-    // Stop playback and shutdown player properly
-    playerShutdown();
+    // 2. Stop and fully shutdown the player (closes audio device)
     playerStop();
+    playerShutdown();
 
-    // Restore normal sleep behavior
-    if (stayAwakeActive)
-    {
-        appletSetIdleTimeDetectionExtension((AppletIdleTimeDetectionExtension)0);
-        stayAwakeActive = false;
-    }
-
-    // Clean up SDL resources
-    if (skin) SDL_DestroyTexture(skin);
-    if (texProgIndicator) SDL_DestroyTexture(texProgIndicator);
-    if (texVolume) SDL_DestroyTexture(texVolume);
-    if (texPan) SDL_DestroyTexture(texPan);
-    if (texPlaylistKnob) SDL_DestroyTexture(texPlaylistKnob);
-    if (texCbuttons) SDL_DestroyTexture(texCbuttons);
-    if (texSHUFREP) SDL_DestroyTexture(texSHUFREP);
-    if (texEQMAIN) SDL_DestroyTexture(texEQMAIN);
-
-    if (font) TTF_CloseFont(font);
-    if (fontBig) TTF_CloseFont(fontBig);
+    // 3. Restore normal sleep/wake behavior
+    appletSetIdleTimeDetectionExtension((AppletIdleTimeDetectionExtension)0);
 
 
+    // 4. Destroy SDL textures
+    SDL_DestroyTexture(skin);
+    SDL_DestroyTexture(texProgIndicator);
+    SDL_DestroyTexture(texVolume);
+    SDL_DestroyTexture(texPan);
+    SDL_DestroyTexture(texPlaylistKnob);
+    SDL_DestroyTexture(texCbuttons);
+    SDL_DestroyTexture(texSHUFREP);
+    SDL_DestroyTexture(texEQMAIN);
 
+    // 5. Close fonts
+    TTF_CloseFont(font);
+    TTF_CloseFont(fontBig);
+
+    // 6. Destroy renderer and window
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
 
+    // 7. Quit SDL subsystems individually - avoid SDL_Quit()
+    //    SDL_Quit() triggers bsdsocket teardown which crashes under sphaira.
+    //    Instead quit only what we explicitly initialised.
     IMG_Quit();
     TTF_Quit();
-    SDL_Quit();
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    // Do NOT call SDL_Quit() here
+
+    // 8. romfsExit LAST
     romfsExit();
 
     return 0;
