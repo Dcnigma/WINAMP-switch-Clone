@@ -8,9 +8,10 @@ void settingsOpen();
 void settingsClose();
 bool settingsIsOpen();
 void settingsSave();
+void settingsLoad();   // Load from sdmc:/config/winamp/settings.json
 
 // Page navigation
-int settingsGetCurrentPage();
+int  settingsGetCurrentPage();
 void settingsPrevPage();
 void settingsNextPage();
 

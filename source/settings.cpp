@@ -5,6 +5,8 @@
 #include <SDL.h>
 #include <SDL_ttf.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <algorithm>
 
@@ -13,26 +15,24 @@
 ============================================================ */
 #define FBW  1920
 #define FBH  1080
-
-// Layout — all FB X values
-#define S_MARGIN_BOT   200   // blank at bottom of screen  = low FB X margin
-#define S_MARGIN_TOP   400   // blank at top of screen     = high FB X margin
-#define S_HDR_H          80   // "// SELECT FILES [<][>]" header
-#define S_TITLE_H       80   // "// SETTINGS" title row
-#define S_ROW_H        160   // each setting row height
-#define S_GAP            8   // gap between rows
-#define S_HINT_H        70   // hint row at bottom of screen
-#define S_SAVE_H       120   // "Save Settings" + "Back" rows
-#define S_VALUE_H       60   // value sub-row inside a setting row (at screen-right)
-#define S_SLIDER_H      50   // slider track height
-#define S_SLIDER_W     400   // slider track width (screen X span = FB Y span)
-#define S_BTNS_H         80   // cancel/done row
-#define ADD_BTN_W         70   // button width in FB-Y = screen horizontal size
-#define ADD_BTN_H         70   // button height in FB-X = screen vertical size
-#define ADD_BTN_MARGIN    10   // gap from right edge
+#define S_MARGIN_BOT   200
+#define S_MARGIN_TOP   400
+#define S_HDR_H         80
+#define S_TITLE_H       80
+#define S_ROW_H        160
+#define S_GAP            8
+#define S_HINT_H        70
+#define S_SAVE_H       120
+#define S_VALUE_H       60
+#define S_SLIDER_H      50
+#define S_SLIDER_W     400
+#define S_BTNS_H        80
+#define ADD_BTN_W       70
+#define ADD_BTN_H       70
+#define ADD_BTN_MARGIN  10
 
 /* ============================================================
-   COLOURS (SDL_Color inline — same style as filebrowser)
+   COLOURS
 ============================================================ */
 #define SC_BG          SDL_Color{  8,  16,  8, 255}
 #define SC_BLOCK       SDL_Color{ 12,  24, 12, 220}
@@ -52,36 +52,28 @@
 
 /* ============================================================
    PAGE NAVIGATION STATE
-   For future expansion: the > button navigates to next settings page.
-   Currently only 1 page exists, so canFwd/canBack are always false.
-   The > button is rendered but hidden until a second page is added.
 ============================================================ */
-static int  g_settingsPage    = 0;
-static const int SETTINGS_PAGES = 2;  // NOW 2 PAGES!
-// Which item index the > button maps to (navigated like a regular item)
-#define SETTING_PAGE_NEXT  (SETTINGS_COUNT)      // virtual index for > button
-#define SETTING_PAGE_PREV  (SETTINGS_COUNT + 1)  // virtual index for < button
-static int  g_totalItems = SETTINGS_COUNT; // + optional page nav buttons
-
+static int  g_settingsPage   = 0;
+static const int SETTINGS_PAGES = 2;
+#define SETTING_PAGE_NEXT  (SETTINGS_COUNT)
+#define SETTING_PAGE_PREV  (SETTINGS_COUNT + 1)
+static int  g_totalItems = SETTINGS_COUNT;
 
 /* ============================================================
    STATE
 ============================================================ */
-static bool g_settingsOpen  = false;
-static int  g_selectedItem  = 0;
+static bool g_settingsOpen = false;
+static int  g_selectedItem = 0;
 
 PlayerSettings g_settings =
 {
-    // Page 1
-    false,           // crossfadeEnabled
-    3.0f,            // crossfadeSeconds
-    false,           // autoGainEnabled
-    REPLAYGAIN_TRACK,// replayGainMode
-
-    // Page 2
-    45.0f,           // touchSensitivity (pixels per song)
-    3,               // touchSpeedLimit (swaps per frame)
-    true             // stayAwakeEnabled
+    false,            // crossfadeEnabled
+    3.0f,             // crossfadeSeconds
+    false,            // autoGainEnabled
+    REPLAYGAIN_TRACK, // replayGainMode
+    45.0f,            // touchSensitivity
+    3,                // touchSpeedLimit
+    true              // stayAwakeEnabled
 };
 
 void settingsOpen()  { g_settingsOpen = true; }
@@ -91,27 +83,16 @@ bool settingsIsOpen(){ return g_settingsOpen; }
 /* ============================================================
    PAGE NAVIGATION HELPERS
 ============================================================ */
-int settingsGetCurrentPage()
-{
-    return g_settingsPage;
-}
+int settingsGetCurrentPage() { return g_settingsPage; }
 
 void settingsPrevPage()
 {
-    if (g_settingsPage > 0)
-    {
-        g_settingsPage--;
-        g_selectedItem = 0;  // Reset selection when changing pages
-    }
+    if (g_settingsPage > 0) { g_settingsPage--; g_selectedItem = 0; }
 }
 
 void settingsNextPage()
 {
-    if (g_settingsPage < SETTINGS_PAGES - 1)
-    {
-        g_settingsPage++;
-        g_selectedItem = 0;  // Reset selection when changing pages
-    }
+    if (g_settingsPage < SETTINGS_PAGES - 1) { g_settingsPage++; g_selectedItem = 0; }
 }
 
 /* ============================================================
@@ -119,16 +100,11 @@ void settingsNextPage()
 ============================================================ */
 void settingsSave()
 {
-    // Make sure the directory exists
     mkdir("sdmc:/config",        0777);
     mkdir("sdmc:/config/winamp", 0777);
 
     FILE* f = fopen("sdmc:/config/winamp/settings.json", "w");
-    if (!f)
-    {
-        printf("[Settings] Failed to open settings.json for writing\n");
-        return;
-    }
+    if (!f) { printf("[Settings] Failed to open settings.json for writing\n"); return; }
 
     const char* replayGainStr =
         (g_settings.replayGainMode == REPLAYGAIN_TRACK) ? "TRACK" :
@@ -157,6 +133,110 @@ void settingsSave()
     printf("[Settings] Saved to sdmc:/config/winamp/settings.json\n");
 }
 
+/* ============================================================
+   SETTINGS LOAD
+============================================================ */
+void settingsLoad()
+{
+    FILE* f = fopen("sdmc:/config/winamp/settings.json", "r");
+    if (!f)
+    {
+        printf("[Settings] No settings.json found, using defaults\n");
+        return;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (size <= 0 || size > 4096)
+    {
+        printf("[Settings] settings.json invalid size, using defaults\n");
+        fclose(f);
+        return;
+    }
+
+    char* buf = (char*)malloc(size + 1);
+    if (!buf) { fclose(f); return; }
+    fread(buf, 1, size, f);
+    buf[size] = '\0';
+    fclose(f);
+
+    // Simple key/value parser — no external JSON library needed
+    auto readBool = [&](const char* key, bool& out)
+    {
+        const char* p = strstr(buf, key);
+        if (!p) return;
+        p = strchr(p, ':');
+        if (!p) return;
+        while (*++p == ' ');
+        out = (strncmp(p, "true", 4) == 0);
+    };
+
+    auto readFloat = [&](const char* key, float& out, float minV, float maxV)
+    {
+        const char* p = strstr(buf, key);
+        if (!p) return;
+        p = strchr(p, ':');
+        if (!p) return;
+        float v = 0.0f;
+        if (sscanf(p + 1, " %f", &v) == 1)
+            if (v >= minV && v <= maxV) out = v;
+    };
+
+    auto readInt = [&](const char* key, int& out, int minV, int maxV)
+    {
+        const char* p = strstr(buf, key);
+        if (!p) return;
+        p = strchr(p, ':');
+        if (!p) return;
+        int v = 0;
+        if (sscanf(p + 1, " %d", &v) == 1)
+            if (v >= minV && v <= maxV) out = v;
+    };
+
+    auto readString = [&](const char* key, char* out, int maxLen)
+    {
+        const char* p = strstr(buf, key);
+        if (!p) return;
+        p = strchr(p, ':');
+        if (!p) return;
+        p = strchr(p, '"');
+        if (!p) return;
+        p++;
+        int i = 0;
+        while (*p && *p != '"' && i < maxLen - 1)
+            out[i++] = *p++;
+        out[i] = '\0';
+    };
+
+    // Page 1
+    readBool ("\"crossfadeEnabled\"",  g_settings.crossfadeEnabled);
+    readFloat("\"crossfadeSeconds\"",  g_settings.crossfadeSeconds,  0.5f, 10.0f);
+    readBool ("\"autoGainEnabled\"",   g_settings.autoGainEnabled);
+
+    char replayGainStr[16] = {};
+    readString("\"replayGainMode\"", replayGainStr, sizeof(replayGainStr));
+    if      (strcmp(replayGainStr, "TRACK") == 0) g_settings.replayGainMode = REPLAYGAIN_TRACK;
+    else if (strcmp(replayGainStr, "ALBUM") == 0) g_settings.replayGainMode = REPLAYGAIN_ALBUM;
+    else if (strcmp(replayGainStr, "OFF")   == 0) g_settings.replayGainMode = REPLAYGAIN_OFF;
+
+    // Page 2
+    readFloat("\"touchSensitivity\"",  g_settings.touchSensitivity,  20.0f, 80.0f);
+    readInt  ("\"touchSpeedLimit\"",   g_settings.touchSpeedLimit,   1,     10);
+    readBool ("\"stayAwakeEnabled\"",  g_settings.stayAwakeEnabled);
+
+    free(buf);
+
+    printf("[Settings] Loaded: crossfade=%s %.1fs  gain=%s  replayGain=%s\n",
+           g_settings.crossfadeEnabled ? "on" : "off",
+           g_settings.crossfadeSeconds,
+           g_settings.autoGainEnabled  ? "on" : "off",
+           replayGainStr[0] ? replayGainStr : "OFF");
+    printf("[Settings]   sensitivity=%.0fpx  speedLimit=%d  stayAwake=%s\n",
+           g_settings.touchSensitivity, g_settings.touchSpeedLimit,
+           g_settings.stayAwakeEnabled ? "on" : "off");
+}
 
 /* ============================================================
    INPUT
@@ -165,162 +245,101 @@ void settingsHandleInput(PadState* pad)
 {
     u64 down = padGetButtonsDown(pad);
 
-    // X = close without saving
     if (down & HidNpadButton_X) { settingsClose(); return; }
 
-    // Determine how many settings are on current page
-    int pageItemCount = 0;
-    if (g_settingsPage == 0)
-        pageItemCount = 4;  // Page 1: Crossfade, Crossfade Time, ReplayGain, Auto Gain
-    else if (g_settingsPage == 1)
-        pageItemCount = 3;  // Page 2: Touch Sensitivity, Touch Speed, Stay Awake
-
-    int totalSelectableItems = pageItemCount + 2;  // +2 for Save and Back buttons
+    int pageItemCount = (g_settingsPage == 0) ? 4 : 3;
+    int totalSelectableItems = pageItemCount + 2;  // +2 for Save and Back
 
     if (down & HidNpadButton_Up)
     {
         g_selectedItem--;
-        if (g_selectedItem < 0)
-            g_selectedItem = totalSelectableItems - 1;
+        if (g_selectedItem < 0) g_selectedItem = totalSelectableItems - 1;
     }
     if (down & HidNpadButton_Down)
     {
         g_selectedItem++;
-        if (g_selectedItem >= totalSelectableItems)
-            g_selectedItem = 0;
+        if (g_selectedItem >= totalSelectableItems) g_selectedItem = 0;
     }
 
-    // A = toggle / activate
     if (down & HidNpadButton_A)
     {
-        // Check if Save or Back button
-        if (g_selectedItem == pageItemCount)  // Save button
-        {
-            settingsSave();
-            settingsClose();
-            return;
-        }
-        else if (g_selectedItem == pageItemCount + 1)  // Back button
-        {
-            settingsClose();
-            return;
-        }
+        if (g_selectedItem == pageItemCount)
+            { settingsSave(); settingsClose(); return; }
+        if (g_selectedItem == pageItemCount + 1)
+            { settingsClose(); return; }
 
-        // Map selected item to actual setting based on page
-        int actualSetting = g_selectedItem;
-        if (g_settingsPage == 1)
-            actualSetting = SETTING_TOUCH_SENSITIVITY + g_selectedItem;
+        int act = g_selectedItem;
+        if (g_settingsPage == 1) act = SETTING_TOUCH_SENSITIVITY + g_selectedItem;
 
-        switch (actualSetting)
+        switch (act)
         {
-            // Page 1 Settings
             case SETTING_CROSSFADE:
-                g_settings.crossfadeEnabled = !g_settings.crossfadeEnabled;
-                break;
-
+                g_settings.crossfadeEnabled = !g_settings.crossfadeEnabled; break;
             case SETTING_CROSSFADE_TIME:
-                g_settings.crossfadeSeconds = 3.0f; // reset to default
-                break;
-
+                g_settings.crossfadeSeconds = 3.0f; break;
             case SETTING_REPLAYGAIN:
-                if (g_settings.replayGainMode == REPLAYGAIN_OFF)
-                    g_settings.replayGainMode = REPLAYGAIN_TRACK;
-                else if (g_settings.replayGainMode == REPLAYGAIN_TRACK)
-                    g_settings.replayGainMode = REPLAYGAIN_ALBUM;
-                else
-                    g_settings.replayGainMode = REPLAYGAIN_OFF;
+                if      (g_settings.replayGainMode == REPLAYGAIN_OFF)   g_settings.replayGainMode = REPLAYGAIN_TRACK;
+                else if (g_settings.replayGainMode == REPLAYGAIN_TRACK) g_settings.replayGainMode = REPLAYGAIN_ALBUM;
+                else                                                      g_settings.replayGainMode = REPLAYGAIN_OFF;
                 break;
-
             case SETTING_AUTOGAIN:
-                g_settings.autoGainEnabled = !g_settings.autoGainEnabled;
-                break;
-
-            // Page 2 Settings
+                g_settings.autoGainEnabled = !g_settings.autoGainEnabled; break;
             case SETTING_TOUCH_SENSITIVITY:
-                g_settings.touchSensitivity = 45.0f; // reset to default
-                break;
-
+                g_settings.touchSensitivity = 45.0f; break;
             case SETTING_TOUCH_SPEED_LIMIT:
-                g_settings.touchSpeedLimit = 3; // reset to default
-                break;
-
+                g_settings.touchSpeedLimit = 3; break;
             case SETTING_STAY_AWAKE:
-                g_settings.stayAwakeEnabled = !g_settings.stayAwakeEnabled;
-                break;
+                g_settings.stayAwakeEnabled = !g_settings.stayAwakeEnabled; break;
         }
     }
 
-    // Left/Right = adjust values
-    if((down & HidNpadButton_Left) || (down & HidNpadButton_Right))
+    if ((down & HidNpadButton_Left) || (down & HidNpadButton_Right))
     {
-        // Skip if on Save or Back buttons
-        if (g_selectedItem >= pageItemCount)
-            return;
+        if (g_selectedItem >= pageItemCount) return;
 
-        // Map selected item to actual setting based on page
-        int actualSetting = g_selectedItem;
-        if (g_settingsPage == 1)
-            actualSetting = SETTING_TOUCH_SENSITIVITY + g_selectedItem;
+        int act = g_selectedItem;
+        if (g_settingsPage == 1) act = SETTING_TOUCH_SENSITIVITY + g_selectedItem;
 
-        if(actualSetting == SETTING_CROSSFADE_TIME)
+        if (act == SETTING_CROSSFADE_TIME)
         {
             float step = (down & HidNpadButton_Left) ? -0.5f : 0.5f;
             g_settings.crossfadeSeconds += step;
-            if(g_settings.crossfadeSeconds < 0.5f)  g_settings.crossfadeSeconds = 0.5f;
-            if(g_settings.crossfadeSeconds > 10.0f) g_settings.crossfadeSeconds = 10.0f;
+            if (g_settings.crossfadeSeconds < 0.5f)  g_settings.crossfadeSeconds = 0.5f;
+            if (g_settings.crossfadeSeconds > 10.0f) g_settings.crossfadeSeconds = 10.0f;
         }
-        else if(actualSetting == SETTING_TOUCH_SENSITIVITY)
+        else if (act == SETTING_TOUCH_SENSITIVITY)
         {
             float step = (down & HidNpadButton_Left) ? -5.0f : 5.0f;
             g_settings.touchSensitivity += step;
-            if(g_settings.touchSensitivity < 20.0f)  g_settings.touchSensitivity = 20.0f;
-            if(g_settings.touchSensitivity > 80.0f) g_settings.touchSensitivity = 80.0f;
+            if (g_settings.touchSensitivity < 20.0f) g_settings.touchSensitivity = 20.0f;
+            if (g_settings.touchSensitivity > 80.0f) g_settings.touchSensitivity = 80.0f;
         }
-        else if(actualSetting == SETTING_TOUCH_SPEED_LIMIT)
+        else if (act == SETTING_TOUCH_SPEED_LIMIT)
         {
             int step = (down & HidNpadButton_Left) ? -1 : 1;
             g_settings.touchSpeedLimit += step;
-            if(g_settings.touchSpeedLimit < 1)   g_settings.touchSpeedLimit = 1;
-            if(g_settings.touchSpeedLimit > 10)  g_settings.touchSpeedLimit = 10;
+            if (g_settings.touchSpeedLimit < 1)  g_settings.touchSpeedLimit = 1;
+            if (g_settings.touchSpeedLimit > 10) g_settings.touchSpeedLimit = 10;
         }
-        else if(actualSetting == SETTING_REPLAYGAIN)
+        else if (act == SETTING_REPLAYGAIN)
         {
-            // Left/Right also cycles ReplayGain mode
-            if(down & HidNpadButton_Right){
-                if(g_settings.replayGainMode == REPLAYGAIN_OFF)
-                    g_settings.replayGainMode = REPLAYGAIN_TRACK;
-                else if(g_settings.replayGainMode == REPLAYGAIN_TRACK)
-                    g_settings.replayGainMode = REPLAYGAIN_ALBUM;
-                else
-                    g_settings.replayGainMode = REPLAYGAIN_OFF;
-            } else {
-                if(g_settings.replayGainMode == REPLAYGAIN_OFF)
-                    g_settings.replayGainMode = REPLAYGAIN_ALBUM;
-                else if(g_settings.replayGainMode == REPLAYGAIN_ALBUM)
-                    g_settings.replayGainMode = REPLAYGAIN_TRACK;
-                else
-                    g_settings.replayGainMode = REPLAYGAIN_OFF;
+            if (down & HidNpadButton_Right)
+            {
+                if      (g_settings.replayGainMode == REPLAYGAIN_OFF)   g_settings.replayGainMode = REPLAYGAIN_TRACK;
+                else if (g_settings.replayGainMode == REPLAYGAIN_TRACK) g_settings.replayGainMode = REPLAYGAIN_ALBUM;
+                else                                                      g_settings.replayGainMode = REPLAYGAIN_OFF;
+            }
+            else
+            {
+                if      (g_settings.replayGainMode == REPLAYGAIN_OFF)   g_settings.replayGainMode = REPLAYGAIN_ALBUM;
+                else if (g_settings.replayGainMode == REPLAYGAIN_ALBUM) g_settings.replayGainMode = REPLAYGAIN_TRACK;
+                else                                                      g_settings.replayGainMode = REPLAYGAIN_OFF;
             }
         }
     }
 
-    // ZL/ZR = Page navigation
-    if (down & HidNpadButton_ZL)
-    {
-        if (g_settingsPage > 0)
-        {
-            g_settingsPage--;
-            g_selectedItem = 0;
-        }
-    }
-    if (down & HidNpadButton_ZR)
-    {
-        if (g_settingsPage < SETTINGS_PAGES - 1)
-        {
-            g_settingsPage++;
-            g_selectedItem = 0;
-        }
-    }
+    if (down & HidNpadButton_ZL) settingsPrevPage();
+    if (down & HidNpadButton_ZR) settingsNextPage();
 }
 
 /* ============================================================
@@ -332,114 +351,86 @@ static void sDrawBox(SDL_Renderer* r, SDL_Rect rect,
     drawRect(r, rect, fill.r, fill.g, fill.b, fill.a);
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(r, border.r, border.g, border.b, border.a);
-    for(int i=0;i<thick;i++){
-        SDL_Rect br={rect.x+i,rect.y+i,rect.w-i*2,rect.h-i*2};
-        SDL_RenderDrawRect(r,&br);
+    for (int i = 0; i < thick; i++) {
+        SDL_Rect br = {rect.x+i, rect.y+i, rect.w-i*2, rect.h-i*2};
+        SDL_RenderDrawRect(r, &br);
     }
 }
 
-// Draw a full-width row at FB X = fbx, height fbw
 static void sDrawRow(SDL_Renderer* r, int fbx, int fbw,
                      SDL_Color fill, SDL_Color border, int thick=2)
 {
-    SDL_Rect rect={fbx, 0, fbw, FBH};
+    SDL_Rect rect = {fbx, 0, fbw, FBH};
     sDrawBox(r, rect, fill, border, thick);
 }
 
-// Same but left-aligned (text starts at paddingY from left of screen)
 static void fbRowTextLeft(SDL_Renderer* r, TTF_Font* font,
-                         const char* txt, int fbx, int fbw,
-                         SDL_Color col, int screenLeftPad = 30,
-                         int offsetY = 0)
+                          const char* txt, int fbx, int fbw,
+                          SDL_Color col, int screenLeftPad=30, int offsetY=0)
 {
     SDL_Rect rect = {fbx - offsetY, 0, fbw, FBH};
     drawVerticalText(r, font, txt, rect, col, 0, screenLeftPad, ALIGN_TOP);
 }
 
-// Draw text centred horizontally in a row (ALIGN_CENTER on full FBH)
 static void sRowText(SDL_Renderer* r, TTF_Font* font,
-                     const char* txt, int fbx, int fbw, SDL_Color col, int offsetY = 0)
+                     const char* txt, int fbx, int fbw, SDL_Color col, int offsetY=0)
 {
-    SDL_Rect rect={fbx - offsetY, 0, fbw, FBH};
+    SDL_Rect rect = {fbx - offsetY, 0, fbw, FBH};
     drawVerticalText(r, font, txt, rect, col, 0, 0, ALIGN_CENTER);
 }
 
-// Draw label text near the top of the screen (low FB Y = screen left)
-// paddingY = screen X offset from screen left
 static void sRowLabel(SDL_Renderer* r, TTF_Font* font,
                       const char* txt, int fbx, int fbw,
                       SDL_Color col, int paddingY=30)
 {
-    SDL_Rect rect={fbx, 0, fbw, FBH};
+    SDL_Rect rect = {fbx, 0, fbw, FBH};
     drawVerticalText(r, font, txt, rect, col, -15, paddingY, ALIGN_TOP);
 }
 
-// Draw value text near the bottom of the screen (high FB Y = screen right)
-// paddingY = screen X offset from screen right
 static void sRowValue(SDL_Renderer* r, TTF_Font* font,
                       const char* txt, int fbx, int fbw,
                       SDL_Color col, int paddingY=30)
 {
-    SDL_Rect rect={fbx, 0, fbw, FBH};
+    SDL_Rect rect = {fbx, 0, fbw, FBH};
     drawVerticalText(r, font, txt, rect, col, -15, paddingY, ALIGN_BOTTOM);
 }
 
-// Draw a vertical slider bar (appears as a vertical bar on the portrait screen)
-// fbx = FB X of row, fbw = row height
-// value = 0.0..1.0
 static void sDrawSlider(SDL_Renderer* r, int fbx, int fbw, float value)
 {
-    // Slider sits at screen right = high FB Y, centred in the row
-    // In FB coords: centred in FBH, near right side (high FB Y)
-    int sliderFBY_centre = FBH - 520;  // screen X ~120px from right = FB Y
+    int sliderFBY_centre = FBH - 520;
     int trackFBY = sliderFBY_centre - S_SLIDER_W/2;
-    int trackFBX = fbx + (fbw - S_SLIDER_H)/2;  // centred vertically in row
+    int trackFBX = fbx + (fbw - S_SLIDER_H)/2;
 
-    // Background track
-    SDL_Rect bg={trackFBX, trackFBY, S_SLIDER_H, S_SLIDER_W};
+    SDL_Rect bg = {trackFBX, trackFBY, S_SLIDER_H, S_SLIDER_W};
     sDrawBox(r, bg, SC_SLIDER_BG, SC_BRD_DIM, 1);
 
-    // Fill
     int fillH = (int)(S_SLIDER_W * value);
-    if(fillH > 0){
-        SDL_Rect fill={trackFBX, trackFBY + S_SLIDER_W - fillH,
-                       S_SLIDER_H, fillH};
-        drawRect(r, fill,
-                 SC_SLIDER_FILL.b, SC_SLIDER_FILL.a,
+    if (fillH > 0) {
+        SDL_Rect fill = {trackFBX, trackFBY + S_SLIDER_W - fillH, S_SLIDER_H, fillH};
+        drawRect(r, fill, SC_SLIDER_FILL.b, SC_SLIDER_FILL.a,
                  SC_SLIDER_FILL.r, SC_SLIDER_FILL.g);
     }
 
-    // Knob — a small square at the fill level
     int knobY = trackFBY + S_SLIDER_W - fillH - 8;
-    if(knobY < trackFBY) knobY = trackFBY;
-    SDL_Rect knob={trackFBX - 4, knobY, S_SLIDER_H + 8, 16};
+    if (knobY < trackFBY) knobY = trackFBY;
+    SDL_Rect knob = {trackFBX - 4, knobY, S_SLIDER_H + 8, 16};
     sDrawBox(r, knob, SDL_Color{30,30,30,255}, SC_GREEN_DIM, 1);
 }
 
-// Draw an ON/OFF toggle indicator box at screen-right of a row
 /* ============================================================
    RENDER
-   Rows drawn from high FB X → low FB X (= screen bottom → top)
-   Order in array matches screen top → bottom, but we draw reversed.
 ============================================================ */
 void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
 {
-    if(!g_settingsOpen) return;
+    if (!g_settingsOpen) return;
 
-    // Dark overlay
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer, 5, 12, 5, 240);
-    SDL_Rect overlay={0,0,FBW,FBH};
+    SDL_Rect overlay = {0, 0, FBW, FBH};
     SDL_RenderFillRect(renderer, &overlay);
 
-/*============================================================
-     Layout
-============================================================ */
-
-    // Start position: high FB X end, walk down
     int x = FBW - S_MARGIN_TOP;
 
-    // Title - show current page
     x -= S_TITLE_H;
     sDrawRow(renderer, x, S_TITLE_H, SC_TITLE, SC_BORDER, 2);
     char titleText[64];
@@ -447,73 +438,42 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
              g_settingsPage + 1, SETTINGS_PAGES);
     fbRowTextLeft(renderer, font, titleText, x, S_TITLE_H, SC_GREEN, 30, -15);
 
-    // Page navigation buttons - shown only when multiple pages exist
     bool canBack = (g_settingsPage > 0);
     bool canFwd  = (g_settingsPage < SETTINGS_PAGES - 1);
 
-    if (canBack)
-    {
-        bool selNav = (g_selectedItem == SETTING_PAGE_PREV);
-        SDL_Color navBg  = selNav ? SC_SEL : COL_BTN;
-        SDL_Color navBrd = selNav ? SC_BORDER : SC_BRD_DIM;
-        SDL_Rect lb = {x + (S_HDR_H - 50)/2, FBH - 40 - 180, 50, 80};
-        sDrawBox(renderer, lb, navBg, navBrd, selNav ? 3 : 2);
-        SDL_Rect tr = {lb.x + 30, lb.y, lb.w, lb.h};
-        drawVerticalText(renderer, font, "<", tr,
-                         selNav ? SC_GREEN : SC_GREY, 0, 0, ALIGN_CENTER);
+    if (canBack) {
+        bool s = (g_selectedItem == SETTING_PAGE_PREV);
+        SDL_Rect lb = {x + (S_HDR_H-50)/2, FBH-40-180, 50, 80};
+        sDrawBox(renderer, lb, s ? SC_SEL : COL_BTN, s ? SC_BORDER : SC_BRD_DIM, s ? 3 : 2);
+        SDL_Rect tr = {lb.x+30, lb.y, lb.w, lb.h};
+        drawVerticalText(renderer, font, "<", tr, s ? SC_GREEN : SC_GREY, 0, 0, ALIGN_CENTER);
+    }
+    if (canFwd) {
+        bool s = (g_selectedItem == SETTING_PAGE_NEXT);
+        SDL_Rect rb = {x + (S_HDR_H-50)/2, FBH-40-80, 50, 80};
+        sDrawBox(renderer, rb, s ? SC_SEL : COL_BTN, s ? SC_BORDER : SC_BRD_DIM, s ? 3 : 2);
+        SDL_Rect tr = {rb.x+30, rb.y, rb.w, rb.h};
+        drawVerticalText(renderer, font, ">", tr, s ? SC_GREEN : SC_GREY, 0, 0, ALIGN_CENTER);
     }
 
-    if (canFwd)
-    {
-        bool selNav = (g_selectedItem == SETTING_PAGE_NEXT);
-        SDL_Color navBg  = selNav ? SC_SEL : COL_BTN;
-        SDL_Color navBrd = selNav ? SC_BORDER : SC_BRD_DIM;
-        SDL_Rect rb = {x + (S_HDR_H - 50)/2, FBH - 40 - 80, 50, 80};
-        sDrawBox(renderer, rb, navBg, navBrd, selNav ? 3 : 2);
-        SDL_Rect tr = {rb.x + 30, rb.y, rb.w, rb.h};
-        drawVerticalText(renderer, font, ">", tr,
-                         selNav ? SC_GREEN : SC_GREY, 0, 0, ALIGN_CENTER);
-    }
+    struct SettingRow { int id; const char* label; bool isBack; bool isSave; };
 
-    // Define setting rows based on current page
-    struct SettingRow {
-        int     id;
-        const char* label;
-        bool    isBack;
-        bool    isSave;
-    };
-
-    SettingRow* srows;
-    int rowCount;
-
-    // Page 1 Settings
     static SettingRow page1[] = {
-        { SETTING_CROSSFADE,        "Crossfade",      false, false },
-        { SETTING_CROSSFADE_TIME,   "Crossfade Time", false, false },
-        { SETTING_REPLAYGAIN,       "ReplayGain",     false, false },
-        { SETTING_AUTOGAIN,         "Auto Gain",      false, false },
+        { SETTING_CROSSFADE,      "Crossfade",      false, false },
+        { SETTING_CROSSFADE_TIME, "Crossfade Time", false, false },
+        { SETTING_REPLAYGAIN,     "ReplayGain",     false, false },
+        { SETTING_AUTOGAIN,       "Auto Gain",      false, false },
     };
-
-    // Page 2 Settings
     static SettingRow page2[] = {
         { SETTING_TOUCH_SENSITIVITY, "Touch Sensitivity", false, false },
         { SETTING_TOUCH_SPEED_LIMIT, "Touch Speed",       false, false },
         { SETTING_STAY_AWAKE,        "Stay Awake",        false, false },
     };
 
-    if (g_settingsPage == 0)
-    {
-        srows = page1;
-        rowCount = 4;
-    }
-    else  // Page 2
-    {
-        srows = page2;
-        rowCount = 3;
-    }
+    SettingRow* srows  = (g_settingsPage == 0) ? page1 : page2;
+    int         rowCount = (g_settingsPage == 0) ? 4 : 3;
 
-    // Render rows for current page
-    for(int i = 0; i < rowCount; i++)
+    for (int i = 0; i < rowCount; i++)
     {
         SettingRow& sr = srows[i];
         int rowH = (sr.isBack || sr.isSave) ? S_SAVE_H : S_ROW_H;
@@ -524,147 +484,82 @@ void settingsRender(SDL_Renderer* renderer, TTF_Font* font)
         SDL_Color brd = sel ? SC_BORDER : SC_BRD_DIM;
         SDL_Color tc  = sel ? SC_GREEN  : SC_WHITE;
 
-        sDrawRow(renderer, x, rowH, bg, brd, sel?3:1);
-
-        // Label
+        sDrawRow(renderer, x, rowH, bg, brd, sel ? 3 : 1);
         sRowLabel(renderer, font, sr.label, x, rowH, tc, 30);
 
-        // Value display based on setting type
-        char val[32]={};
-        switch(sr.id){
-            // Page 1 Settings
+        char val[32] = {};
+        switch (sr.id)
+        {
             case SETTING_CROSSFADE:
-                {
-                    const int BW=100, BH=100;
-                    int by = FBH - BW - 20;
-                    int bx = x + (rowH - BH)/2;
-                    SDL_Color bbg = g_settings.crossfadeEnabled
-                                  ? SDL_Color{0,120,0,255}
-                                  : SDL_Color{35,35,35,255};
-                    SDL_Color bbr = g_settings.crossfadeEnabled
-                                  ? SC_GREEN : SC_BRD_DIM;
-                    SDL_Rect box={bx,by,BH,BW};
-                    sDrawBox(renderer, box, bbg, bbr, 2);
-                }
-                break;
-
-            case SETTING_CROSSFADE_TIME:
-                {
-                    snprintf(val,sizeof(val),"%.1fs",
-                             g_settings.crossfadeSeconds);
-                    sRowValue(renderer, font, val, x, rowH, SC_GREEN_DIM, 30);
-
-                    // Slider
-                    float t=(g_settings.crossfadeSeconds-0.5f)/(10.0f-0.5f);
-                    sDrawSlider(renderer, x, rowH, t);
-                }
-                break;
-
-            case SETTING_REPLAYGAIN:
-                {
-                    const char* m="OFF";
-                    if(g_settings.replayGainMode==REPLAYGAIN_TRACK) m="TRACK";
-                    if(g_settings.replayGainMode==REPLAYGAIN_ALBUM) m="ALBUM";
-                    sRowValue(renderer, font, m, x, rowH, SC_GREEN_DIM, 30);
-                }
-                break;
-
             case SETTING_AUTOGAIN:
-                {
-                    const int BW=100, BH=100;
-                    int by = FBH - BW - 20;
-                    int bx = x + (rowH - BH)/2;
-                    SDL_Color bbg = g_settings.autoGainEnabled
-                                  ? SDL_Color{0,120,0,255}
-                                  : SDL_Color{35,35,35,255};
-                    SDL_Color bbr = g_settings.autoGainEnabled
-                                  ? SC_GREEN : SC_BRD_DIM;
-                    SDL_Rect box={bx,by,BH,BW};
-                    sDrawBox(renderer, box, bbg, bbr, 2);
-                }
-                break;
-
-            // Page 2 Settings
-            case SETTING_TOUCH_SENSITIVITY:
-                {
-                    snprintf(val,sizeof(val),"%.0f px",
-                             g_settings.touchSensitivity);
-                    sRowValue(renderer, font, val, x, rowH, SC_GREEN_DIM, 30);
-
-                    // Slider (20-80 range)
-                    float t=(g_settings.touchSensitivity-20.0f)/(80.0f-20.0f);
-                    sDrawSlider(renderer, x, rowH, t);
-                }
-                break;
-
-            case SETTING_TOUCH_SPEED_LIMIT:
-                {
-                    snprintf(val,sizeof(val),"%d",
-                             g_settings.touchSpeedLimit);
-                    sRowValue(renderer, font, val, x, rowH, SC_GREEN_DIM, 30);
-                }
-                break;
-
             case SETTING_STAY_AWAKE:
-                {
-                    const int BW=100, BH=100;
-                    int by = FBH - BW - 20;
-                    int bx = x + (rowH - BH)/2;
-                    SDL_Color bbg = g_settings.stayAwakeEnabled
-                                  ? SDL_Color{0,120,0,255}
-                                  : SDL_Color{35,35,35,255};
-                    SDL_Color bbr = g_settings.stayAwakeEnabled
-                                  ? SC_GREEN : SC_BRD_DIM;
-                    SDL_Rect box={bx,by,BH,BW};
-                    sDrawBox(renderer, box, bbg, bbr, 2);
-                }
+            {
+                bool on = (sr.id == SETTING_CROSSFADE)  ? g_settings.crossfadeEnabled :
+                          (sr.id == SETTING_AUTOGAIN)   ? g_settings.autoGainEnabled  :
+                                                           g_settings.stayAwakeEnabled;
+                const int BW=100, BH=100;
+                SDL_Rect box = {x + (rowH-BH)/2, FBH-BW-20, BH, BW};
+                sDrawBox(renderer, box,
+                         on ? SDL_Color{0,120,0,255} : SDL_Color{35,35,35,255},
+                         on ? SC_GREEN : SC_BRD_DIM, 2);
                 break;
+            }
+            case SETTING_CROSSFADE_TIME:
+            {
+                snprintf(val, sizeof(val), "%.1fs", g_settings.crossfadeSeconds);
+                sRowValue(renderer, font, val, x, rowH, SC_GREEN_DIM, 30);
+                float t = (g_settings.crossfadeSeconds - 0.5f) / (10.0f - 0.5f);
+                sDrawSlider(renderer, x, rowH, t);
+                break;
+            }
+            case SETTING_REPLAYGAIN:
+            {
+                const char* m = (g_settings.replayGainMode == REPLAYGAIN_TRACK) ? "TRACK" :
+                                (g_settings.replayGainMode == REPLAYGAIN_ALBUM) ? "ALBUM" : "OFF";
+                sRowValue(renderer, font, m, x, rowH, SC_GREEN_DIM, 30);
+                break;
+            }
+            case SETTING_TOUCH_SENSITIVITY:
+            {
+                snprintf(val, sizeof(val), "%.0f px", g_settings.touchSensitivity);
+                sRowValue(renderer, font, val, x, rowH, SC_GREEN_DIM, 30);
+                float t = (g_settings.touchSensitivity - 20.0f) / (80.0f - 20.0f);
+                sDrawSlider(renderer, x, rowH, t);
+                break;
+            }
+            case SETTING_TOUCH_SPEED_LIMIT:
+            {
+                snprintf(val, sizeof(val), "%d", g_settings.touchSpeedLimit);
+                sRowValue(renderer, font, val, x, rowH, SC_GREEN_DIM, 30);
+                break;
+            }
         }
     }
 
     x -= S_GAP;
     x -= S_BTNS_H;
-
     int half = FBH/2 - 10;
 
-    // Save Settings button
     {
-        bool sel = (g_selectedItem == rowCount);  // Save is after all settings
-        SDL_Color bg  = sel ? SC_SEL   : SC_BLOCK;
-        SDL_Color brd = sel ? SC_BORDER : SC_BRD_DIM;
-        SDL_Color tc  = sel ? SC_GREEN  : SC_WHITE;
-
-        SDL_Rect saveBtn = {x, 5, S_BTNS_H, half};
-        sDrawBox(renderer, saveBtn, bg, brd, sel ? 3 : 1);
-        SDL_Rect saveText = {saveBtn.x + 10, saveBtn.y, saveBtn.w, saveBtn.h};
-        drawVerticalText(renderer, font, "Save Settings", saveText, tc, 0, 0, ALIGN_CENTER);
+        bool sel = (g_selectedItem == rowCount);
+        SDL_Color bg = sel ? SC_SEL : SC_BLOCK, brd = sel ? SC_BORDER : SC_BRD_DIM, tc = sel ? SC_GREEN : SC_WHITE;
+        SDL_Rect btn = {x, 5, S_BTNS_H, half};
+        sDrawBox(renderer, btn, bg, brd, sel ? 3 : 1);
+        SDL_Rect tr  = {btn.x+10, btn.y, btn.w, btn.h};
+        drawVerticalText(renderer, font, "Save Settings", tr, tc, 0, 0, ALIGN_CENTER);
+    }
+    {
+        bool sel = (g_selectedItem == rowCount + 1);
+        SDL_Color bg = sel ? SC_SEL : SC_BLOCK, brd = sel ? SC_BORDER : SC_BRD_DIM, tc = sel ? SC_GREEN : SC_WHITE;
+        SDL_Rect btn = {x, FBH/2+5, S_BTNS_H, half};
+        sDrawBox(renderer, btn, bg, brd, sel ? 3 : 1);
+        SDL_Rect tr  = {btn.x+10, btn.y, btn.w, btn.h};
+        drawVerticalText(renderer, font, "Back", tr, tc, 0, 0, ALIGN_CENTER);
     }
 
-    // Back button
-    {
-        bool sel = (g_selectedItem == rowCount + 1);  // Back is after Save
-        SDL_Color bg  = sel ? SC_SEL   : SC_BLOCK;
-        SDL_Color brd = sel ? SC_BORDER : SC_BRD_DIM;
-        SDL_Color tc  = sel ? SC_GREEN  : SC_WHITE;
-
-        SDL_Rect backBtn = {x, FBH/2 + 5, S_BTNS_H, half};
-        sDrawBox(renderer, backBtn, bg, brd, sel ? 3 : 1);
-        SDL_Rect backText = {backBtn.x + 10, backBtn.y, backBtn.w, backBtn.h};
-        drawVerticalText(renderer, font, "Back", backText, tc, 0, 0, ALIGN_CENTER);
-    }
-
-    // Hint row
     x -= (S_HINT_H + S_GAP);
-    sDrawRow(renderer, x, S_HINT_H,
-             SDL_Color{4,14,4,200}, SC_BRD_DIM, 1);
-    {
-        char hintText[128];
-        if (SETTINGS_PAGES > 1)
-            snprintf(hintText, sizeof(hintText),
-                     "Move: Up/Down  Select: A/Left/Right  Page: ZL/ZR");
-        else
-            snprintf(hintText, sizeof(hintText),
-                     "Move: Up/Down  Select: A/Left/Right");
-        sRowText(renderer, font, hintText, x, S_HINT_H, SC_GREY_DIM, -15);
-    }
+    sDrawRow(renderer, x, S_HINT_H, SDL_Color{4,14,4,200}, SC_BRD_DIM, 1);
+    sRowText(renderer, font,
+             "Move: Up/Down  Select: A/Left/Right  Page: ZL/ZR",
+             x, S_HINT_H, SC_GREY_DIM, -15);
 }

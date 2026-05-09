@@ -79,6 +79,10 @@ void updateStayAwakeLogic()
 int main()
 {
     romfsInit();
+
+    // Load settings FIRST so all subsystems start with correct values
+    settingsLoad();
+
     mp3StartBackgroundScanner();
     flacStartBackgroundScanner();
     oggStartBackgroundScanner();
@@ -208,16 +212,14 @@ int main()
 
     // -------------------------------------------------------
     // SHUTDOWN - Order matters! Stop in reverse init order.
-    //
-    // IMPORTANT: We deliberately do NOT call SDL_Quit() here.
-    // On Switch under sphaira/HBL, SDL_Quit() triggers an
-    // internal bsdsocket cleanup that null-dereferences when
-    // the socket was already partially torn down by the OS.
-    // The OS will clean up remaining resources when the process
-    // exits. Skipping SDL_Quit() is safe and prevents the crash.
+    // Background scanners MUST stop before playerShutdown()
+    // because they may be feeding data to the player.
+    // This also prevents the bsdsocket crash seen when
+    // sphaira/HBL force-kills the process with threads running.
     // -------------------------------------------------------
 
     // 1. Stop all background scanner threads first
+    //    These have open file handles that must be closed cleanly
     mp3StopBackgroundScanner();
     flacStopBackgroundScanner();
     oggStopBackgroundScanner();
@@ -228,10 +230,13 @@ int main()
     playerShutdown();
 
     // 3. Restore normal sleep/wake behavior
-    appletSetIdleTimeDetectionExtension((AppletIdleTimeDetectionExtension)0);
+    if (stayAwakeActive)
+    {
+        appletSetIdleTimeDetectionExtension((AppletIdleTimeDetectionExtension)0);
+        stayAwakeActive = false;
+    }
 
-
-    // 4. Destroy SDL textures
+    // 4. Destroy SDL textures (check for null - some may have failed to load)
     SDL_DestroyTexture(skin);
     SDL_DestroyTexture(texProgIndicator);
     SDL_DestroyTexture(texVolume);
@@ -249,16 +254,12 @@ int main()
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
 
-    // 7. Quit SDL subsystems individually - avoid SDL_Quit()
-    //    SDL_Quit() triggers bsdsocket teardown which crashes under sphaira.
-    //    Instead quit only what we explicitly initialised.
+    // 7. Shutdown SDL subsystems in reverse init order
     IMG_Quit();
     TTF_Quit();
-    SDL_QuitSubSystem(SDL_INIT_VIDEO);
-    SDL_QuitSubSystem(SDL_INIT_AUDIO);
-    // Do NOT call SDL_Quit() here
+    SDL_Quit();
 
-    // 8. romfsExit LAST
+    // 8. romfsExit LAST - everything above may read from romfs
     romfsExit();
 
     return 0;
